@@ -26,8 +26,9 @@ import io.druid.data.input.impl.DimensionSchema;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringDimensionSchema;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularities;
+import io.druid.java.util.common.granularity.Granularities;
 import io.druid.query.aggregation.AggregatorFactory;
+import io.druid.segment.VirtualColumns;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -53,7 +54,8 @@ public class IncrementalIndexMultiValueSpecTest
     IncrementalIndexSchema schema = new IncrementalIndexSchema(
         0,
         new TimestampSpec("ds", "auto", null),
-        QueryGranularities.ALL,
+        Granularities.ALL,
+        VirtualColumns.EMPTY,
         dimensionsSpec,
         new AggregatorFactory[0],
         false

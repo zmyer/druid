@@ -25,8 +25,9 @@ import io.druid.segment.ColumnSelectorFactory;
 import io.druid.segment.DimensionSelector;
 import io.druid.segment.FloatColumnSelector;
 import io.druid.segment.LongColumnSelector;
-import io.druid.segment.NumericColumnSelector;
 import io.druid.segment.ObjectColumnSelector;
+import io.druid.segment.TestFloatColumnSelector;
+import io.druid.segment.TestLongColumnSelector;
 import io.druid.segment.column.ColumnCapabilities;
 
 public class TestColumnSelectorFactory implements ColumnSelectorFactory
@@ -47,7 +48,7 @@ public class TestColumnSelectorFactory implements ColumnSelectorFactory
   @Override
   public FloatColumnSelector makeFloatColumnSelector(final String columnName)
   {
-    return new FloatColumnSelector()
+    return new TestFloatColumnSelector()
     {
       @Override
       public float get()
@@ -60,7 +61,7 @@ public class TestColumnSelectorFactory implements ColumnSelectorFactory
   @Override
   public LongColumnSelector makeLongColumnSelector(final String columnName)
   {
-    return new LongColumnSelector()
+    return new TestLongColumnSelector()
     {
       @Override
       public long get()
@@ -87,12 +88,6 @@ public class TestColumnSelectorFactory implements ColumnSelectorFactory
         return row.get().getRaw(columnName);
       }
     };
-  }
-
-  @Override
-  public NumericColumnSelector makeMathExpressionSelector(String expression)
-  {
-    throw new UnsupportedOperationException("expression is not supported in current context");
   }
 
   @Override

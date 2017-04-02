@@ -22,7 +22,9 @@ package io.druid.query.groupby.epinephelinae;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.base.Predicates;
+import com.google.common.base.Suppliers;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -50,10 +52,10 @@ import io.druid.query.QueryContextKeys;
 import io.druid.query.QueryInterruptedException;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryWatcher;
-import io.druid.query.ResourceLimitExceededException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.groupby.GroupByQuery;
 import io.druid.query.groupby.GroupByQueryConfig;
+import io.druid.query.groupby.GroupByQueryHelper;
 import io.druid.query.groupby.epinephelinae.RowBasedGrouperHelper.RowBasedKey;
 
 import java.io.Closeable;
@@ -69,7 +71,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
-public class GroupByMergingQueryRunnerV2 implements QueryRunner
+public class GroupByMergingQueryRunnerV2 implements QueryRunner<Row>
 {
   private static final Logger log = new Logger(GroupByMergingQueryRunnerV2.class);
   private static final String CTX_KEY_MERGE_RUNNERS_USING_CHAINED_EXECUTION = "mergeRunnersUsingChainedExecution";
@@ -81,6 +83,7 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
   private final int concurrencyHint;
   private final BlockingPool<ByteBuffer> mergeBufferPool;
   private final ObjectMapper spillMapper;
+  private final String processingTmpDir;
 
   public GroupByMergingQueryRunnerV2(
       GroupByQueryConfig config,
@@ -89,7 +92,8 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
       Iterable<QueryRunner<Row>> queryables,
       int concurrencyHint,
       BlockingPool<ByteBuffer> mergeBufferPool,
-      ObjectMapper spillMapper
+      ObjectMapper spillMapper,
+      String processingTmpDir
   )
   {
     this.config = config;
@@ -99,6 +103,7 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
     this.concurrencyHint = concurrencyHint;
     this.mergeBufferPool = mergeBufferPool;
     this.spillMapper = spillMapper;
+    this.processingTmpDir = processingTmpDir;
   }
 
   @Override
@@ -124,13 +129,15 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
       return new ChainedExecutionQueryRunner(exec, queryWatcher, queryables).run(query, responseContext);
     }
 
+    final boolean isSingleThreaded = querySpecificConfig.isSingleThreaded();
+
     final AggregatorFactory[] combiningAggregatorFactories = new AggregatorFactory[query.getAggregatorSpecs().size()];
     for (int i = 0; i < query.getAggregatorSpecs().size(); i++) {
       combiningAggregatorFactories[i] = query.getAggregatorSpecs().get(i).getCombiningFactory();
     }
 
     final File temporaryStorageDirectory = new File(
-        System.getProperty("java.io.tmpdir"),
+        processingTmpDir,
         String.format("druid-groupBy-%s_%s", UUID.randomUUID(), query.getId())
     );
 
@@ -165,19 +172,20 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
                 // This will potentially block if there are no merge buffers left in the pool.
                 final long timeout = timeoutAt - System.currentTimeMillis();
                 if (timeout <= 0 || (mergeBufferHolder = mergeBufferPool.take(timeout)) == null) {
-                  throw new QueryInterruptedException(new TimeoutException());
+                  throw new TimeoutException();
                 }
                 resources.add(mergeBufferHolder);
               }
-              catch (InterruptedException e) {
+              catch (Exception e) {
                 throw new QueryInterruptedException(e);
               }
 
               Pair<Grouper<RowBasedKey>, Accumulator<Grouper<RowBasedKey>, Row>> pair = RowBasedGrouperHelper.createGrouperAccumulatorPair(
                   query,
                   false,
+                  null,
                   config,
-                  mergeBufferHolder.get(),
+                  Suppliers.ofInstance(mergeBufferHolder.get()),
                   concurrencyHint,
                   temporaryStorage,
                   spillMapper,
@@ -185,6 +193,7 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
               );
               final Grouper<RowBasedKey> grouper = pair.lhs;
               final Accumulator<Grouper<RowBasedKey>, Row> accumulator = pair.rhs;
+              grouper.init();
 
               final ReferenceCountingResourceHolder<Grouper<RowBasedKey>> grouperHolder =
                   ReferenceCountingResourceHolder.fromCloseable(grouper);
@@ -205,7 +214,7 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
                                 );
                               }
 
-                              return exec.submit(
+                              ListenableFuture<Boolean> future = exec.submit(
                                   new AbstractPrioritizedCallable<Boolean>(priority)
                                   {
                                     @Override
@@ -231,13 +240,25 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
                                     }
                                   }
                               );
+
+                              if (isSingleThreaded) {
+                                waitForFutureCompletion(
+                                    query,
+                                    Futures.allAsList(ImmutableList.of(future)),
+                                    timeoutAt - System.currentTimeMillis()
+                                );
+                              }
+
+                              return future;
                             }
                           }
                       )
                   )
               );
 
-              waitForFutureCompletion(query, futures, timeoutAt - System.currentTimeMillis());
+              if (!isSingleThreaded) {
+                waitForFutureCompletion(query, futures, timeoutAt - System.currentTimeMillis());
+              }
 
               return RowBasedGrouperHelper.makeGrouperIterator(
                   grouper,
@@ -292,7 +313,7 @@ public class GroupByMergingQueryRunnerV2 implements QueryRunner
       for (Boolean result : results) {
         if (!result) {
           future.cancel(true);
-          throw new ResourceLimitExceededException("Grouping resources exhausted");
+          throw GroupByQueryHelper.throwAccumulationResourceLimitExceededException();
         }
       }
     }

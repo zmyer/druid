@@ -24,9 +24,9 @@ import com.google.common.collect.Maps;
 import io.druid.collections.ResourceHolder;
 import io.druid.collections.StupidPool;
 import io.druid.data.input.InputRow;
-import io.druid.granularity.QueryGranularity;
 import io.druid.java.util.common.IAE;
 import io.druid.java.util.common.ISE;
+import io.druid.java.util.common.granularity.Granularity;
 import io.druid.java.util.common.logger.Logger;
 import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
@@ -93,32 +93,7 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
 
   public OffheapIncrementalIndex(
       long minTimestamp,
-      QueryGranularity gran,
-      final AggregatorFactory[] metrics,
-      boolean deserializeComplexMetrics,
-      boolean reportParseExceptions,
-      boolean sortFacts,
-      int maxRowCount,
-      StupidPool<ByteBuffer> bufferPool
-  )
-  {
-    this(
-        new IncrementalIndexSchema.Builder().withMinTimestamp(minTimestamp)
-                                            .withQueryGranularity(gran)
-                                            .withMetrics(metrics)
-                                            .withRollup(IncrementalIndexSchema.DEFAULT_ROLLUP)
-                                            .build(),
-        deserializeComplexMetrics,
-        reportParseExceptions,
-        sortFacts,
-        maxRowCount,
-        bufferPool
-    );
-  }
-
-  public OffheapIncrementalIndex(
-      long minTimestamp,
-      QueryGranularity gran,
+      Granularity gran,
       boolean rollup,
       final AggregatorFactory[] metrics,
       int maxRowCount,
@@ -141,7 +116,7 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
 
   public OffheapIncrementalIndex(
       long minTimestamp,
-      QueryGranularity gran,
+      Granularity gran,
       final AggregatorFactory[] metrics,
       int maxRowCount,
       StupidPool<ByteBuffer> bufferPool
@@ -177,8 +152,7 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
       ColumnSelectorFactory columnSelectorFactory = makeColumnSelectorFactory(
           agg,
           rowSupplier,
-          deserializeComplexMetrics,
-          getColumnCapabilities()
+          deserializeComplexMetrics
       );
 
       selectors.put(
@@ -229,7 +203,7 @@ public class OffheapIncrementalIndex extends IncrementalIndex<BufferAggregator>
           for (int i = 0; i < metrics.length; i++) {
             final AggregatorFactory agg = metrics[i];
             getAggs()[i] = agg.factorizeBuffered(
-                makeColumnSelectorFactory(agg, rowSupplier, deserializeComplexMetrics, getColumnCapabilities())
+                makeColumnSelectorFactory(agg, rowSupplier, deserializeComplexMetrics)
             );
           }
           rowContainer.set(null);

@@ -23,22 +23,24 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Predicates;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import io.druid.hll.HyperLogLogCollector;
 import io.druid.java.util.common.StringUtils;
+import io.druid.query.ColumnSelectorPlus;
 import io.druid.query.aggregation.Aggregator;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.AggregatorFactoryNotMergeableException;
-import io.druid.query.aggregation.Aggregators;
 import io.druid.query.aggregation.BufferAggregator;
-import io.druid.query.aggregation.hyperloglog.HyperLogLogCollector;
+import io.druid.query.aggregation.NoopAggregator;
+import io.druid.query.aggregation.NoopBufferAggregator;
+import io.druid.query.aggregation.cardinality.types.CardinalityAggregatorColumnSelectorStrategy;
+import io.druid.query.aggregation.cardinality.types.CardinalityAggregatorColumnSelectorStrategyFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
 import io.druid.query.dimension.DefaultDimensionSpec;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.segment.ColumnSelectorFactory;
-import io.druid.segment.DimensionSelector;
+import io.druid.segment.DimensionHandlerUtils;
 import org.apache.commons.codec.binary.Base64;
 
 import java.nio.ByteBuffer;
@@ -94,6 +96,8 @@ public class CardinalityAggregatorFactory extends AggregatorFactory
 
   private static final byte CACHE_TYPE_ID = (byte) 0x8;
   private static final byte CACHE_KEY_SEPARATOR = (byte) 0xFF;
+  private static final CardinalityAggregatorColumnSelectorStrategyFactory STRATEGY_FACTORY =
+      new CardinalityAggregatorColumnSelectorStrategyFactory();
 
   private final String name;
   private final List<DimensionSpec> fields;
@@ -133,44 +137,34 @@ public class CardinalityAggregatorFactory extends AggregatorFactory
   @Override
   public Aggregator factorize(final ColumnSelectorFactory columnFactory)
   {
-    List<DimensionSelector> selectors = makeDimensionSelectors(columnFactory);
+    ColumnSelectorPlus<CardinalityAggregatorColumnSelectorStrategy>[] selectorPluses =
+        DimensionHandlerUtils.createColumnSelectorPluses(
+            STRATEGY_FACTORY,
+            fields,
+            columnFactory
+        );
 
-    if (selectors.isEmpty()) {
-      return Aggregators.noopAggregator();
+    if (selectorPluses.length == 0) {
+      return NoopAggregator.instance();
     }
-
-    return new CardinalityAggregator(selectors, byRow);
+    return new CardinalityAggregator(name, selectorPluses, byRow);
   }
 
 
   @Override
   public BufferAggregator factorizeBuffered(ColumnSelectorFactory columnFactory)
   {
-    List<DimensionSelector> selectors = makeDimensionSelectors(columnFactory);
+    ColumnSelectorPlus<CardinalityAggregatorColumnSelectorStrategy>[] selectorPluses =
+        DimensionHandlerUtils.createColumnSelectorPluses(
+            STRATEGY_FACTORY,
+            fields,
+            columnFactory
+        );
 
-    if (selectors.isEmpty()) {
-      return Aggregators.noopBufferAggregator();
+    if (selectorPluses.length == 0) {
+      return NoopBufferAggregator.instance();
     }
-
-    return new CardinalityBufferAggregator(selectors, byRow);
-  }
-
-  private List<DimensionSelector> makeDimensionSelectors(final ColumnSelectorFactory columnFactory)
-  {
-    return Lists.newArrayList(
-        Iterables.filter(
-            Iterables.transform(
-                fields, new Function<DimensionSpec, DimensionSelector>()
-            {
-              @Override
-              public DimensionSelector apply(DimensionSpec input)
-              {
-                return columnFactory.makeDimensionSelector(input);
-              }
-            }
-            ), Predicates.notNull()
-        )
-    );
+    return new CardinalityBufferAggregator(selectorPluses, byRow);
   }
 
   @Override

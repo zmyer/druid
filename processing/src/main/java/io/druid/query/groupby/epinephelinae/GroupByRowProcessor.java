@@ -21,10 +21,10 @@ package io.druid.query.groupby.epinephelinae;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Predicate;
+import com.google.common.base.Supplier;
 import com.google.common.collect.Lists;
-import io.druid.collections.BlockingPool;
-import io.druid.collections.ReferenceCountingResourceHolder;
-import io.druid.common.utils.JodaUtils;
+import io.druid.collections.ResourceHolder;
+import io.druid.common.guava.SettableSupplier;
 import io.druid.data.input.Row;
 import io.druid.java.util.common.Pair;
 import io.druid.java.util.common.guava.Accumulator;
@@ -33,16 +33,16 @@ import io.druid.java.util.common.guava.CloseQuietly;
 import io.druid.java.util.common.guava.FilteredSequence;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.query.Query;
-import io.druid.query.QueryContextKeys;
-import io.druid.query.QueryInterruptedException;
-import io.druid.query.ResourceLimitExceededException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.filter.Filter;
 import io.druid.query.filter.ValueMatcher;
 import io.druid.query.groupby.GroupByQuery;
 import io.druid.query.groupby.GroupByQueryConfig;
-import io.druid.query.groupby.RowBasedValueMatcherFactory;
+import io.druid.query.groupby.GroupByQueryHelper;
+import io.druid.query.groupby.RowBasedColumnSelectorFactory;
 import io.druid.query.groupby.epinephelinae.RowBasedGrouperHelper.RowBasedKey;
+import io.druid.query.groupby.resource.GroupByQueryResource;
+import io.druid.segment.column.ValueType;
 import io.druid.segment.filter.BooleanValueMatcher;
 import io.druid.segment.filter.Filters;
 import org.joda.time.DateTime;
@@ -53,17 +53,19 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
-import java.util.concurrent.TimeoutException;
 
 public class GroupByRowProcessor
 {
   public static Sequence<Row> process(
       final Query queryParam,
       final Sequence<Row> rows,
+      final Map<String, ValueType> rowSignature,
       final GroupByQueryConfig config,
-      final BlockingPool<ByteBuffer> mergeBufferPool,
-      final ObjectMapper spillMapper
+      final GroupByQueryResource resource,
+      final ObjectMapper spillMapper,
+      final String processingTmpDir
   )
   {
     final GroupByQuery query = (GroupByQuery) queryParam;
@@ -74,22 +76,26 @@ public class GroupByRowProcessor
       aggregatorFactories[i] = query.getAggregatorSpecs().get(i);
     }
 
+
     final File temporaryStorageDirectory = new File(
-        System.getProperty("java.io.tmpdir"),
+        processingTmpDir,
         String.format("druid-groupBy-%s_%s", UUID.randomUUID(), query.getId())
     );
 
-    final Number queryTimeout = query.getContextValue(QueryContextKeys.TIMEOUT, null);
-    final long timeout = queryTimeout == null ? JodaUtils.MAX_INSTANT : queryTimeout.longValue();
     final List<Interval> queryIntervals = query.getIntervals();
     final Filter filter = Filters.convertToCNFFromQueryContext(
         query,
         Filters.toFilter(query.getDimFilter())
     );
-    final RowBasedValueMatcherFactory filterMatcherFactory = new RowBasedValueMatcherFactory();
+
+    final SettableSupplier<Row> rowSupplier = new SettableSupplier<>();
+    final RowBasedColumnSelectorFactory columnSelectorFactory = RowBasedColumnSelectorFactory.create(
+        rowSupplier,
+        rowSignature
+    );
     final ValueMatcher filterMatcher = filter == null
-                                       ? new BooleanValueMatcher(true)
-                                       : filter.makeMatcher(filterMatcherFactory);
+                                       ? BooleanValueMatcher.of(true)
+                                       : filter.makeMatcher(columnSelectorFactory);
 
     final FilteredSequence<Row> filteredSequence = new FilteredSequence<>(
         rows,
@@ -103,12 +109,13 @@ public class GroupByRowProcessor
             for (Interval queryInterval : queryIntervals) {
               if (queryInterval.contains(rowTime)) {
                 inInterval = true;
+                break;
               }
             }
             if (!inInterval) {
               return false;
             }
-            filterMatcherFactory.setRow(input);
+            rowSupplier.set(input);
             return filterMatcher.matches();
           }
         }
@@ -120,7 +127,9 @@ public class GroupByRowProcessor
           @Override
           public CloseableGrouperIterator<RowBasedKey, Row> make()
           {
-            final List<Closeable> closeOnFailure = Lists.newArrayList();
+            // This contains all closeable objects which are closed when the returned iterator iterates all the elements,
+            // or an exceptions is thrown. The objects are closed in their reverse order.
+            final List<Closeable> closeOnExit = Lists.newArrayList();
 
             try {
               final LimitedTemporaryStorage temporaryStorage = new LimitedTemporaryStorage(
@@ -128,25 +137,23 @@ public class GroupByRowProcessor
                   querySpecificConfig.getMaxOnDiskStorage()
               );
 
-              closeOnFailure.add(temporaryStorage);
-
-              final ReferenceCountingResourceHolder<ByteBuffer> mergeBufferHolder;
-              try {
-                // This will potentially block if there are no merge buffers left in the pool.
-                if (timeout <= 0 || (mergeBufferHolder = mergeBufferPool.take(timeout)) == null) {
-                  throw new QueryInterruptedException(new TimeoutException());
-                }
-                closeOnFailure.add(mergeBufferHolder);
-              }
-              catch (InterruptedException e) {
-                throw new QueryInterruptedException(e);
-              }
+              closeOnExit.add(temporaryStorage);
 
               Pair<Grouper<RowBasedKey>, Accumulator<Grouper<RowBasedKey>, Row>> pair = RowBasedGrouperHelper.createGrouperAccumulatorPair(
                   query,
                   true,
+                  rowSignature,
                   querySpecificConfig,
-                  mergeBufferHolder.get(),
+                  new Supplier<ByteBuffer>()
+                  {
+                    @Override
+                    public ByteBuffer get()
+                    {
+                      final ResourceHolder<ByteBuffer> mergeBufferHolder = resource.getMergeBuffer();
+                      closeOnExit.add(mergeBufferHolder);
+                      return mergeBufferHolder.get();
+                    }
+                  },
                   -1,
                   temporaryStorage,
                   spillMapper,
@@ -154,11 +161,14 @@ public class GroupByRowProcessor
               );
               final Grouper<RowBasedKey> grouper = pair.lhs;
               final Accumulator<Grouper<RowBasedKey>, Row> accumulator = pair.rhs;
-              closeOnFailure.add(grouper);
+              closeOnExit.add(grouper);
 
-              final Grouper<RowBasedKey> retVal = filteredSequence.accumulate(grouper, accumulator);
+              final Grouper<RowBasedKey> retVal = filteredSequence.accumulate(
+                  grouper,
+                  accumulator
+              );
               if (retVal != grouper) {
-                throw new ResourceLimitExceededException("Grouping resources exhausted");
+                throw GroupByQueryHelper.throwAccumulationResourceLimitExceededException();
               }
 
               return RowBasedGrouperHelper.makeGrouperIterator(
@@ -169,16 +179,16 @@ public class GroupByRowProcessor
                     @Override
                     public void close() throws IOException
                     {
-                      grouper.close();
-                      mergeBufferHolder.close();
-                      CloseQuietly.close(temporaryStorage);
+                      for (Closeable closeable : Lists.reverse(closeOnExit)) {
+                        CloseQuietly.close(closeable);
+                      }
                     }
                   }
               );
             }
             catch (Throwable e) {
               // Exception caught while setting up the iterator; release resources.
-              for (Closeable closeable : Lists.reverse(closeOnFailure)) {
+              for (Closeable closeable : Lists.reverse(closeOnExit)) {
                 CloseQuietly.close(closeable);
               }
               throw e;

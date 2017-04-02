@@ -1,27 +1,25 @@
 /*
+ * Licensed to Metamarkets Group Inc. (Metamarkets) under one
+ * or more contributor license agreements. See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership. Metamarkets licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License. You may obtain a copy of the License at
  *
- *  Licensed to Metamarkets Group Inc. (Metamarkets) under one
- *  or more contributor license agreements. See the NOTICE file
- *  distributed with this work for additional information
- *  regarding copyright ownership. Metamarkets licenses this file
- *  to you under the Apache License, Version 2.0 (the
- *  "License"); you may not use this file except in compliance
- *  with the License. You may obtain a copy of the License at
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
- *  http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing,
- *  software distributed under the License is distributed on an
- *  "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- *  KIND, either express or implied. See the License for the
- *  specific language governing permissions and limitations
- *  under the License.
- * /
- *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied. See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
  */
 
 package io.druid.query.groupby;
 
+import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -30,9 +28,11 @@ import io.druid.data.input.impl.CSVParseSpec;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularities;
+import io.druid.java.util.common.granularity.Granularities;
+import io.druid.java.util.common.guava.MergeSequence;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
+import io.druid.query.Query;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryRunnerFactory;
 import io.druid.query.aggregation.AggregatorFactory;
@@ -52,7 +52,7 @@ import org.junit.Test;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.concurrent.Executors;
+import java.util.Map;
 
 /**
  */
@@ -64,20 +64,11 @@ public class GroupByQueryRunnerFactoryTest
   @Test
   public void testMergeRunnersEnsureGroupMerging() throws Exception
   {
-    QueryRunnerFactory factory = GroupByQueryRunnerTest.makeQueryRunnerFactory(new GroupByQueryConfig());
-    QueryRunner mergedRunner = factory.mergeRunners(
-        Executors.newSingleThreadExecutor(),
-        ImmutableList.of(
-        factory.createRunner(createSegment()),
-        factory.createRunner(createSegment())
-        )
-    );
-
     GroupByQuery query = GroupByQuery
         .builder()
         .setDataSource("xx")
         .setQuerySegmentSpec(new LegacySegmentSpec("1970/3000"))
-        .setGranularity(QueryGranularities.ALL)
+        .setGranularity(Granularities.ALL)
         .setDimensions(Lists.<DimensionSpec>newArrayList(new DefaultDimensionSpec("tags", "tags")))
         .setAggregatorSpecs(
             Arrays.asList(
@@ -88,6 +79,41 @@ public class GroupByQueryRunnerFactoryTest
             )
         )
         .build();
+
+    final QueryRunnerFactory factory = GroupByQueryRunnerTest.makeQueryRunnerFactory(new GroupByQueryConfig());
+
+    QueryRunner mergedRunner = factory.getToolchest().mergeResults(
+        new QueryRunner()
+        {
+          @Override
+          public Sequence run(Query query, Map responseContext)
+          {
+            return factory.getToolchest().mergeResults(
+                new QueryRunner()
+                {
+                  @Override
+                  public Sequence run(Query query, Map responseContext)
+                  {
+                    try {
+                      return new MergeSequence(
+                          query.getResultOrdering(),
+                          Sequences.simple(
+                              Arrays.asList(
+                                  factory.createRunner(createSegment()).run(query, responseContext),
+                                  factory.createRunner(createSegment()).run(query, responseContext)
+                              )
+                          )
+                      );
+                    } catch (Exception e) {
+                      Throwables.propagate(e);
+                      return null;
+                    }
+                  }
+                }
+            ).run(query, responseContext);
+          }
+        }
+    );
 
     Sequence<Row> result = mergedRunner.run(query, Maps.newHashMap());
 
@@ -103,7 +129,7 @@ public class GroupByQueryRunnerFactoryTest
   {
     IncrementalIndex incrementalIndex = new OnheapIncrementalIndex(
         0,
-        QueryGranularities.NONE,
+        Granularities.NONE,
         new AggregatorFactory[]{
             new CountAggregatorFactory("count")
         },

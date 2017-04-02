@@ -23,7 +23,7 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonTypeName;
 import com.google.common.base.Preconditions;
-import io.druid.granularity.QueryGranularity;
+import io.druid.java.util.common.granularity.Granularity;
 import io.druid.query.BaseQuery;
 import io.druid.query.DataSource;
 import io.druid.query.Query;
@@ -31,7 +31,7 @@ import io.druid.query.Result;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.filter.DimFilter;
 import io.druid.query.spec.QuerySegmentSpec;
-import io.druid.segment.VirtualColumn;
+import io.druid.segment.VirtualColumns;
 
 import java.util.List;
 import java.util.Map;
@@ -43,10 +43,10 @@ import java.util.Objects;
 public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
 {
   private final DimFilter dimFilter;
-  private final QueryGranularity granularity;
+  private final Granularity granularity;
   private final List<DimensionSpec> dimensions;
   private final List<String> metrics;
-  private final List<VirtualColumn> virtualColumns;
+  private final VirtualColumns virtualColumns;
   private final PagingSpec pagingSpec;
 
   @JsonCreator
@@ -55,10 +55,10 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
       @JsonProperty("intervals") QuerySegmentSpec querySegmentSpec,
       @JsonProperty("descending") boolean descending,
       @JsonProperty("filter") DimFilter dimFilter,
-      @JsonProperty("granularity") QueryGranularity granularity,
+      @JsonProperty("granularity") Granularity granularity,
       @JsonProperty("dimensions") List<DimensionSpec> dimensions,
       @JsonProperty("metrics") List<String> metrics,
-      @JsonProperty("virtualColumns") List<VirtualColumn> virtualColumns,
+      @JsonProperty("virtualColumns") VirtualColumns virtualColumns,
       @JsonProperty("pagingSpec") PagingSpec pagingSpec,
       @JsonProperty("context") Map<String, Object> context
   )
@@ -67,7 +67,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
     this.dimFilter = dimFilter;
     this.granularity = granularity;
     this.dimensions = dimensions;
-    this.virtualColumns = virtualColumns;
+    this.virtualColumns = VirtualColumns.nullToEmpty(virtualColumns);
     this.metrics = metrics;
     this.pagingSpec = pagingSpec;
 
@@ -110,7 +110,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
   }
 
   @JsonProperty
-  public QueryGranularity getGranularity()
+  public Granularity getGranularity()
   {
     return granularity;
   }
@@ -134,7 +134,7 @@ public class SelectQuery extends BaseQuery<Result<SelectResultValue>>
   }
 
   @JsonProperty
-  public List<VirtualColumn> getVirtualColumns()
+  public VirtualColumns getVirtualColumns()
   {
     return virtualColumns;
   }

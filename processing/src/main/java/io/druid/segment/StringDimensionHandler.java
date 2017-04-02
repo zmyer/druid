@@ -32,7 +32,6 @@ import java.io.Closeable;
 import java.io.File;
 import java.lang.reflect.Array;
 import java.util.Arrays;
-import java.util.Comparator;
 
 public class StringDimensionHandler implements DimensionHandler<Integer, int[], String>
 {
@@ -52,13 +51,13 @@ public class StringDimensionHandler implements DimensionHandler<Integer, int[], 
   }
 
   @Override
-  public int getLengthFromEncodedArray(int[] dimVals)
+  public int getLengthOfEncodedKeyComponent(int[] dimVals)
   {
     return dimVals.length;
   }
 
   @Override
-  public int compareSortedEncodedArrays(int[] lhs, int[] rhs)
+  public int compareSortedEncodedKeyComponents(int[] lhs, int[] rhs)
   {
     int lhsLen = lhs.length;
     int rhsLen = rhs.length;
@@ -74,7 +73,7 @@ public class StringDimensionHandler implements DimensionHandler<Integer, int[], 
   }
 
   @Override
-  public void validateSortedEncodedArrays(
+  public void validateSortedEncodedKeyComponents(
       int[] lhs,
       int[] rhs,
       Indexed<String> lhsEncodings,
@@ -167,7 +166,7 @@ public class StringDimensionHandler implements DimensionHandler<Integer, int[], 
   }
 
   @Override
-  public Object getRowValueArrayFromColumn(Closeable column, int currRow)
+  public int[] getEncodedKeyComponentFromColumn(Closeable column, int currRow)
   {
     DictionaryEncodedColumn dict = (DictionaryEncodedColumn) column;
     int[] theVals;
@@ -214,20 +213,4 @@ public class StringDimensionHandler implements DimensionHandler<Integer, int[], 
   {
     return new StringDimensionMergerLegacy(dimensionName, indexSpec, outDir, ioPeon, capabilities, progress);
   }
-
-  public static final Comparator<Integer> ENCODED_COMPARATOR = new Comparator<Integer>()
-  {
-    @Override
-    public int compare(Integer o1, Integer o2)
-    {
-      if (o1 == null) {
-        return o2 == null ? 0 : -1;
-      }
-      if (o2 == null) {
-        return 1;
-      }
-      return o1.compareTo(o2);
-    }
-  };
-
 }

@@ -27,7 +27,7 @@ import io.druid.collections.bitmap.BitmapFactory;
 import io.druid.collections.bitmap.ConciseBitmapFactory;
 import io.druid.collections.bitmap.ImmutableBitmap;
 import io.druid.collections.bitmap.WrappedImmutableConciseBitmap;
-import it.uniroma3.mat.extendedset.intset.ImmutableConciseSet;
+import io.druid.extendedset.intset.ImmutableConciseSet;
 
 /**
  */
@@ -80,9 +80,8 @@ public class ConciseBitmapSerdeFactory implements BitmapSerdeFactory
     @Override
     public WrappedImmutableConciseBitmap fromByteBuffer(ByteBuffer buffer, int numBytes)
     {
-      final ByteBuffer readOnlyBuffer = buffer.asReadOnlyBuffer();
-      readOnlyBuffer.limit(readOnlyBuffer.position() + numBytes);
-      return new WrappedImmutableConciseBitmap(new ImmutableConciseSet(readOnlyBuffer));
+      buffer.limit(buffer.position() + numBytes);
+      return new WrappedImmutableConciseBitmap(new ImmutableConciseSet(buffer));
     }
 
     @Override

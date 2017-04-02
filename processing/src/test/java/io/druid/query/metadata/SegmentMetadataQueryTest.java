@@ -28,8 +28,8 @@ import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.MoreExecutors;
 import io.druid.common.utils.JodaUtils;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularities;
 import io.druid.jackson.DefaultObjectMapper;
+import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.query.BySegmentResultValue;
 import io.druid.query.BySegmentResultValueClass;
@@ -154,7 +154,12 @@ public class SegmentMetadataQueryTest
                       .dataSource("testing")
                       .intervals("2013/2014")
                       .toInclude(new ListColumnIncluderator(Arrays.asList("__time", "index", "placement")))
-                      .analysisTypes(null)
+                      .analysisTypes(
+                          SegmentMetadataQuery.AnalysisType.CARDINALITY,
+                          SegmentMetadataQuery.AnalysisType.SIZE,
+                          SegmentMetadataQuery.AnalysisType.INTERVAL,
+                          SegmentMetadataQuery.AnalysisType.MINMAX
+                      )
                       .merge(true)
                       .build();
 
@@ -194,7 +199,7 @@ public class SegmentMetadataQueryTest
                 null,
                 null
             )
-        ), mmap1 ? 93744 : 94517,
+        ), mmap1 ? 123969 : 124664,
         1209,
         null,
         null,
@@ -238,7 +243,7 @@ public class SegmentMetadataQueryTest
                 null
             )
         // null_column will be included only for incremental index, which makes a little bigger result than expected
-        ), mmap2 ? 93744 : 94517,
+        ), mmap2 ? 123969 : 124664,
         1209,
         null,
         null,
@@ -780,7 +785,7 @@ public class SegmentMetadataQueryTest
         expectedSegmentAnalysis1.getNumRows() + expectedSegmentAnalysis2.getNumRows(),
         null,
         null,
-        QueryGranularities.NONE,
+        Granularities.NONE,
         null
     );
 

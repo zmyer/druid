@@ -85,10 +85,10 @@ public class JavaScriptAggregatorFactory extends AggregatorFactory
     this.fnCombine = fnCombine;
     this.config = config;
 
-    if (config.isDisabled()) {
-      this.compiledScript = null;
-    } else {
+    if (config.isEnabled()) {
       this.compiledScript = compileScript(fnAggregate, fnReset, fnCombine);
+    } else {
+      this.compiledScript = null;
     }
   }
 
@@ -171,7 +171,7 @@ public class JavaScriptAggregatorFactory extends AggregatorFactory
               @Override
               public AggregatorFactory apply(String input)
               {
-                return new JavaScriptAggregatorFactory(input, fieldNames, fnAggregate, fnReset, fnCombine, config);
+                return new JavaScriptAggregatorFactory(input, Lists.newArrayList(input), fnCombine, fnReset, fnCombine, config);
               }
             }
         )

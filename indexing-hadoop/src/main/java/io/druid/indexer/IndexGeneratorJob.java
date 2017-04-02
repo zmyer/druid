@@ -281,7 +281,7 @@ public class IndexGeneratorJob implements Jobby
         throw new ISE("WTF?! No bucket found for row: %s", inputRow);
       }
 
-      final long truncatedTimestamp = granularitySpec.getQueryGranularity().truncate(inputRow.getTimestampFromEpoch());
+      final long truncatedTimestamp = granularitySpec.getQueryGranularity().bucketStart(inputRow.getTimestamp()).getMillis();
       final byte[] hashedDimensions = hashFunction.hashBytes(
           HadoopDruidIndexerConfig.JSON_MAPPER.writeValueAsBytes(
               Rows.toGroupKey(
@@ -695,8 +695,15 @@ public class IndexGeneratorJob implements Jobby
           for (File file : toMerge) {
             indexes.add(HadoopDruidIndexerConfig.INDEX_IO.loadIndex(file));
           }
+
+          log.info("starting merge of intermediate persisted segments.");
+          long mergeStartTime = System.currentTimeMillis();
           mergedBase = mergeQueryableIndex(
               indexes, aggregators, new File(baseFlushFile, "merged"), progressIndicator
+          );
+          log.info(
+              "finished merge of intermediate persisted segments. time taken [%d] ms.",
+              (System.currentTimeMillis() - mergeStartTime)
           );
         }
         final FileSystem outputFS = new Path(config.getSchema().getIOConfig().getSegmentOutputPath())
@@ -728,12 +735,24 @@ public class IndexGeneratorJob implements Jobby
             segmentTemplate,
             context.getConfiguration(),
             context,
-            context.getTaskAttemptID(),
             mergedBase,
-            JobHelper.makeSegmentOutputPath(
+            JobHelper.makeFileNamePath(
                 new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
                 outputFS,
-                segmentTemplate
+                segmentTemplate,
+                JobHelper.INDEX_ZIP
+            ),
+            JobHelper.makeFileNamePath(
+                new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+                outputFS,
+                segmentTemplate,
+                JobHelper.DESCRIPTOR_JSON
+            ),
+            JobHelper.makeTmpPath(
+                new Path(config.getSchema().getIOConfig().getSegmentOutputPath()),
+                outputFS,
+                segmentTemplate,
+                context.getTaskAttemptID()
             )
         );
 

@@ -25,11 +25,14 @@ import com.google.common.base.Throwables;
 import com.google.inject.Inject;
 import com.metamx.emitter.EmittingLogger;
 
+import io.druid.indexing.overlord.DataSourceMetadata;
 import io.druid.java.util.common.Pair;
+import io.druid.java.util.common.collect.JavaCompatUtils;
 import io.druid.java.util.common.lifecycle.LifecycleStart;
 import io.druid.java.util.common.lifecycle.LifecycleStop;
 import io.druid.metadata.MetadataSupervisorManager;
 
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,7 +59,7 @@ public class SupervisorManager
 
   public Set<String> getSupervisorIds()
   {
-    return supervisors.keySet();
+    return JavaCompatUtils.keySet(supervisors);
   }
 
   public Optional<SupervisorSpec> getSupervisorSpec(String id)
@@ -114,7 +117,7 @@ public class SupervisorManager
     Preconditions.checkState(started, "SupervisorManager not started");
 
     synchronized (lock) {
-      for (String id : supervisors.keySet()) {
+      for (String id : JavaCompatUtils.keySet(supervisors)) {
         try {
           supervisors.get(id).lhs.stop(false);
         }
@@ -140,7 +143,7 @@ public class SupervisorManager
     return supervisor == null ? Optional.<SupervisorReport>absent() : Optional.fromNullable(supervisor.lhs.getStatus());
   }
 
-  public boolean resetSupervisor(String id)
+  public boolean resetSupervisor(String id, @Nullable DataSourceMetadata dataSourceMetadata)
   {
     Preconditions.checkState(started, "SupervisorManager not started");
     Preconditions.checkNotNull(id, "id");
@@ -151,7 +154,7 @@ public class SupervisorManager
       return false;
     }
 
-    supervisor.lhs.reset();
+    supervisor.lhs.reset(dataSourceMetadata);
     return true;
   }
 

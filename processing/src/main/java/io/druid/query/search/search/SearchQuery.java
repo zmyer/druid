@@ -22,8 +22,8 @@ package io.druid.query.search.search;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
-import io.druid.granularity.QueryGranularities;
-import io.druid.granularity.QueryGranularity;
+import io.druid.java.util.common.granularity.Granularities;
+import io.druid.java.util.common.granularity.Granularity;
 import io.druid.query.BaseQuery;
 import io.druid.query.DataSource;
 import io.druid.query.Query;
@@ -45,7 +45,7 @@ public class SearchQuery extends BaseQuery<Result<SearchResultValue>>
 
   private final DimFilter dimFilter;
   private final SearchSortSpec sortSpec;
-  private final QueryGranularity granularity;
+  private final Granularity granularity;
   private final List<DimensionSpec> dimensions;
   private final SearchQuerySpec querySpec;
   private final int limit;
@@ -54,7 +54,7 @@ public class SearchQuery extends BaseQuery<Result<SearchResultValue>>
   public SearchQuery(
       @JsonProperty("dataSource") DataSource dataSource,
       @JsonProperty("filter") DimFilter dimFilter,
-      @JsonProperty("granularity") QueryGranularity granularity,
+      @JsonProperty("granularity") Granularity granularity,
       @JsonProperty("limit") int limit,
       @JsonProperty("intervals") QuerySegmentSpec querySegmentSpec,
       @JsonProperty("searchDimensions") List<DimensionSpec> dimensions,
@@ -64,14 +64,14 @@ public class SearchQuery extends BaseQuery<Result<SearchResultValue>>
   )
   {
     super(dataSource, querySegmentSpec, false, context);
+    Preconditions.checkNotNull(querySegmentSpec, "Must specify an interval");
+
     this.dimFilter = dimFilter;
     this.sortSpec = sortSpec == null ? DEFAULT_SORT_SPEC : sortSpec;
-    this.granularity = granularity == null ? QueryGranularities.ALL : granularity;
+    this.granularity = granularity == null ? Granularities.ALL : granularity;
     this.limit = (limit == 0) ? 1000 : limit;
     this.dimensions = dimensions;
     this.querySpec = querySpec == null ? new AllSearchQuerySpec() : querySpec;
-
-    Preconditions.checkNotNull(querySegmentSpec, "Must specify an interval");
   }
 
   @Override
@@ -162,7 +162,7 @@ public class SearchQuery extends BaseQuery<Result<SearchResultValue>>
   }
 
   @JsonProperty
-  public QueryGranularity getGranularity()
+  public Granularity getGranularity()
   {
     return granularity;
   }
@@ -210,14 +210,14 @@ public class SearchQuery extends BaseQuery<Result<SearchResultValue>>
   public String toString()
   {
     return "SearchQuery{" +
-        "dataSource='" + getDataSource() + '\'' +
-        ", dimFilter=" + dimFilter +
-        ", granularity='" + granularity + '\'' +
-        ", dimensions=" + dimensions +
-        ", querySpec=" + querySpec +
-        ", querySegmentSpec=" + getQuerySegmentSpec() +
-        ", limit=" + limit +
-        '}';
+           "dataSource='" + getDataSource() + '\'' +
+           ", dimFilter=" + dimFilter +
+           ", granularity='" + granularity + '\'' +
+           ", dimensions=" + dimensions +
+           ", querySpec=" + querySpec +
+           ", querySegmentSpec=" + getQuerySegmentSpec() +
+           ", limit=" + limit +
+           '}';
   }
 
   @Override

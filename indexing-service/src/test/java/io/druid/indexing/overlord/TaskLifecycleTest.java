@@ -45,7 +45,6 @@ import io.druid.data.input.FirehoseFactory;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.MapBasedInputRow;
 import io.druid.data.input.impl.InputRowParser;
-import io.druid.granularity.QueryGranularities;
 import io.druid.indexing.common.SegmentLoaderFactory;
 import io.druid.indexing.common.TaskLock;
 import io.druid.indexing.common.TaskStatus;
@@ -66,11 +65,12 @@ import io.druid.indexing.common.task.RealtimeIndexTask;
 import io.druid.indexing.common.task.Task;
 import io.druid.indexing.common.task.TaskResource;
 import io.druid.indexing.overlord.config.TaskQueueConfig;
+import io.druid.indexing.overlord.supervisor.SupervisorManager;
 import io.druid.indexing.test.TestIndexerMetadataStorageCoordinator;
 import io.druid.jackson.DefaultObjectMapper;
-import io.druid.java.util.common.Granularity;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.Pair;
+import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.guava.Comparators;
 import io.druid.metadata.SQLMetadataStorageActionHandlerFactory;
 import io.druid.metadata.TestDerbyConnector;
@@ -507,7 +507,8 @@ public class TaskLifecycleTest
     Preconditions.checkNotNull(emitter);
 
     taskLockbox = new TaskLockbox(taskStorage);
-    tac = new LocalTaskActionClientFactory(taskStorage, new TaskActionToolbox(taskLockbox, mdc, emitter));
+    tac = new LocalTaskActionClientFactory(taskStorage, new TaskActionToolbox(taskLockbox, mdc, emitter, EasyMock.createMock(
+        SupervisorManager.class)));
     File tmpDir = temporaryFolder.newFolder();
     taskConfig = new TaskConfig(tmpDir.toString(), null, null, 50000, null, false, null, null);
 
@@ -645,17 +646,17 @@ public class TaskLifecycleTest
                 null,
                 new AggregatorFactory[]{new DoubleSumAggregatorFactory("met", "met")},
                 new UniformGranularitySpec(
-                    Granularity.DAY,
+                    Granularities.DAY,
                     null,
                     ImmutableList.of(new Interval("2010-01-01/P2D"))
                 ),
                 mapper
             ),
-            new IndexTask.IndexIOConfig(new MockFirehoseFactory(false)),
-            new IndexTask.IndexTuningConfig(10000, 10, -1, indexSpec, null, false)
+            new IndexTask.IndexIOConfig(new MockFirehoseFactory(false), false, null),
+            new IndexTask.IndexTuningConfig(10000, 10, null, null, indexSpec, 3, true, true, true)
         ),
-        mapper,
-        null
+        null,
+        MAPPER
     );
 
     final Optional<TaskStatus> preRunTaskStatus = tsqa.getStatus(indexTask.getId());
@@ -703,17 +704,17 @@ public class TaskLifecycleTest
                 null,
                 new AggregatorFactory[]{new DoubleSumAggregatorFactory("met", "met")},
                 new UniformGranularitySpec(
-                    Granularity.DAY,
+                    Granularities.DAY,
                     null,
                     ImmutableList.of(new Interval("2010-01-01/P1D"))
                 ),
                 mapper
             ),
-            new IndexTask.IndexIOConfig(new MockExceptionalFirehoseFactory()),
-            new IndexTask.IndexTuningConfig(10000, 10, -1, indexSpec, null, false)
+            new IndexTask.IndexIOConfig(new MockExceptionalFirehoseFactory(), false, null),
+            new IndexTask.IndexTuningConfig(10000, 10, null, null, indexSpec, 3, true, true, true)
         ),
-        mapper,
-        null
+        null,
+        MAPPER
     );
 
     final TaskStatus status = runTask(indexTask);
@@ -1062,17 +1063,17 @@ public class TaskLifecycleTest
                 null,
                 new AggregatorFactory[]{new DoubleSumAggregatorFactory("met", "met")},
                 new UniformGranularitySpec(
-                    Granularity.DAY,
+                    Granularities.DAY,
                     null,
                     ImmutableList.of(new Interval("2010-01-01/P2D"))
                 ),
                 mapper
             ),
-            new IndexTask.IndexIOConfig(new MockFirehoseFactory(false)),
-            new IndexTask.IndexTuningConfig(10000, 10, -1, indexSpec, null, false)
+            new IndexTask.IndexIOConfig(new MockFirehoseFactory(false), false, null),
+            new IndexTask.IndexTuningConfig(10000, 10, null, null, indexSpec, null, false, null, null)
         ),
-        mapper,
-        null
+        null,
+        MAPPER
     );
 
     final long startTime = System.currentTimeMillis();
@@ -1167,7 +1168,7 @@ public class TaskLifecycleTest
         "test_ds",
         null,
         new AggregatorFactory[]{new LongSumAggregatorFactory("count", "rows")},
-        new UniformGranularitySpec(Granularity.DAY, QueryGranularities.NONE, null),
+        new UniformGranularitySpec(Granularities.DAY, Granularities.NONE, null),
         mapper
     );
     RealtimeIOConfig realtimeIOConfig = new RealtimeIOConfig(
@@ -1189,6 +1190,7 @@ public class TaskLifecycleTest
         null,
         0,
         0,
+        null,
         null,
         null
     );

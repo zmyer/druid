@@ -34,7 +34,6 @@ import io.druid.data.input.Row;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.Pair;
 import io.druid.java.util.common.guava.Accumulator;
-import io.druid.java.util.common.guava.ResourceClosingSequence;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.java.util.common.logger.Logger;
@@ -87,7 +86,8 @@ public class GroupByMergedQueryRunner<T> implements QueryRunner<T>
     final Pair<IncrementalIndex, Accumulator<IncrementalIndex, T>> indexAccumulatorPair = GroupByQueryHelper.createIndexAccumulatorPair(
         query,
         querySpecificConfig,
-        bufferPool
+        bufferPool,
+        true
     );
     final Pair<Queue, Accumulator<Queue, T>> bySegmentAccumulatorPair = GroupByQueryHelper.createBySegmentAccumulatorPair();
     final boolean bySegment = BaseQuery.getContextBySegment(query, false);
@@ -153,7 +153,7 @@ public class GroupByMergedQueryRunner<T> implements QueryRunner<T>
       return Sequences.simple(bySegmentAccumulatorPair.lhs);
     }
 
-    return new ResourceClosingSequence<T>(
+    return Sequences.withBaggage(
         Sequences.simple(
             Iterables.transform(
                 indexAccumulatorPair.lhs.iterableWithPostAggregations(null, query.isDescending()),

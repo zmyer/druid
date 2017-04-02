@@ -31,7 +31,7 @@ import io.druid.data.input.impl.CSVParseSpec;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
-import io.druid.granularity.QueryGranularities;
+import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.query.aggregation.AggregationTestHelper;
@@ -115,7 +115,7 @@ public class MultiValuedDimensionTest
   {
     incrementalIndex = new OnheapIncrementalIndex(
         0,
-        QueryGranularities.NONE,
+        Granularities.NONE,
         new AggregatorFactory[]{
             new CountAggregatorFactory("count")
         },
@@ -139,6 +139,7 @@ public class MultiValuedDimensionTest
         "2011-01-12T00:00:00.000Z,product_1,t1\tt2\tt3",
         "2011-01-13T00:00:00.000Z,product_2,t3\tt4\tt5",
         "2011-01-14T00:00:00.000Z,product_3,t5\tt6\tt7",
+        "2011-01-14T00:00:00.000Z,product_4"
     };
 
     for (String row : rows) {
@@ -159,7 +160,7 @@ public class MultiValuedDimensionTest
         .builder()
         .setDataSource("xx")
         .setQuerySegmentSpec(new LegacySegmentSpec("1970/3000"))
-        .setGranularity(QueryGranularities.ALL)
+        .setGranularity(Granularities.ALL)
         .setDimensions(Lists.<DimensionSpec>newArrayList(new DefaultDimensionSpec("tags", "tags")))
         .setAggregatorSpecs(
             Arrays.asList(
@@ -180,6 +181,7 @@ public class MultiValuedDimensionTest
     );
 
     List<Row> expectedResults = Arrays.asList(
+        GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", null, "count", 2L),
         GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", "t1", "count", 2L),
         GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", "t2", "count", 2L),
         GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", "t3", "count", 4L),
@@ -199,7 +201,7 @@ public class MultiValuedDimensionTest
         .builder()
         .setDataSource("xx")
         .setQuerySegmentSpec(new LegacySegmentSpec("1970/3000"))
-        .setGranularity(QueryGranularities.ALL)
+        .setGranularity(Granularities.ALL)
         .setDimensions(Lists.<DimensionSpec>newArrayList(new DefaultDimensionSpec("tags", "tags")))
         .setAggregatorSpecs(
             Arrays.asList(
@@ -240,7 +242,7 @@ public class MultiValuedDimensionTest
         .builder()
         .setDataSource("xx")
         .setQuerySegmentSpec(new LegacySegmentSpec("1970/3000"))
-        .setGranularity(QueryGranularities.ALL)
+        .setGranularity(Granularities.ALL)
         .setDimensions(
             Lists.<DimensionSpec>newArrayList(
                 new RegexFilteredDimensionSpec(
@@ -282,7 +284,7 @@ public class MultiValuedDimensionTest
   {
     TopNQuery query = new TopNQueryBuilder()
         .dataSource("xx")
-        .granularity(QueryGranularities.ALL)
+        .granularity(Granularities.ALL)
         .dimension(new ListFilteredDimensionSpec(
             new DefaultDimensionSpec("tags", "tags"),
             ImmutableSet.of("t3"),

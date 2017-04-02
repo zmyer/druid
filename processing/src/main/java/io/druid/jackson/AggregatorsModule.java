@@ -22,7 +22,7 @@ package io.druid.jackson;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.module.SimpleModule;
-import com.google.common.hash.Hashing;
+import io.druid.hll.HyperLogLogHash;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.aggregation.DoubleMaxAggregatorFactory;
@@ -36,16 +36,22 @@ import io.druid.query.aggregation.LongMinAggregatorFactory;
 import io.druid.query.aggregation.LongSumAggregatorFactory;
 import io.druid.query.aggregation.PostAggregator;
 import io.druid.query.aggregation.cardinality.CardinalityAggregatorFactory;
+import io.druid.query.aggregation.first.DoubleFirstAggregatorFactory;
+import io.druid.query.aggregation.first.LongFirstAggregatorFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniqueFinalizingPostAggregator;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
+import io.druid.query.aggregation.hyperloglog.PreComputedHyperUniquesSerde;
+import io.druid.query.aggregation.last.DoubleLastAggregatorFactory;
+import io.druid.query.aggregation.last.LongLastAggregatorFactory;
 import io.druid.query.aggregation.post.ArithmeticPostAggregator;
 import io.druid.query.aggregation.post.ConstantPostAggregator;
 import io.druid.query.aggregation.post.DoubleGreatestPostAggregator;
 import io.druid.query.aggregation.post.DoubleLeastPostAggregator;
-import io.druid.query.aggregation.post.FieldAccessPostAggregator;
-import io.druid.query.aggregation.post.JavaScriptPostAggregator;
 import io.druid.query.aggregation.post.ExpressionPostAggregator;
+import io.druid.query.aggregation.post.FieldAccessPostAggregator;
+import io.druid.query.aggregation.post.FinalizingFieldAccessPostAggregator;
+import io.druid.query.aggregation.post.JavaScriptPostAggregator;
 import io.druid.query.aggregation.post.LongGreatestPostAggregator;
 import io.druid.query.aggregation.post.LongLeastPostAggregator;
 import io.druid.segment.serde.ComplexMetrics;
@@ -59,7 +65,11 @@ public class AggregatorsModule extends SimpleModule
     super("AggregatorFactories");
 
     if (ComplexMetrics.getSerdeForType("hyperUnique") == null) {
-      ComplexMetrics.registerSerde("hyperUnique", new HyperUniquesSerde(Hashing.murmur3_128()));
+      ComplexMetrics.registerSerde("hyperUnique", new HyperUniquesSerde(HyperLogLogHash.getDefault()));
+    }
+
+    if (ComplexMetrics.getSerdeForType("preComputedHyperUnique") == null) {
+      ComplexMetrics.registerSerde("preComputedHyperUnique", new PreComputedHyperUniquesSerde(HyperLogLogHash.getDefault()));
     }
 
     setMixInAnnotation(AggregatorFactory.class, AggregatorFactoryMixin.class);
@@ -79,7 +89,11 @@ public class AggregatorsModule extends SimpleModule
       @JsonSubTypes.Type(name = "histogram", value = HistogramAggregatorFactory.class),
       @JsonSubTypes.Type(name = "hyperUnique", value = HyperUniquesAggregatorFactory.class),
       @JsonSubTypes.Type(name = "cardinality", value = CardinalityAggregatorFactory.class),
-      @JsonSubTypes.Type(name = "filtered", value = FilteredAggregatorFactory.class)
+      @JsonSubTypes.Type(name = "filtered", value = FilteredAggregatorFactory.class),
+      @JsonSubTypes.Type(name = "longFirst", value = LongFirstAggregatorFactory.class),
+      @JsonSubTypes.Type(name = "doubleFirst", value = DoubleFirstAggregatorFactory.class),
+      @JsonSubTypes.Type(name = "longLast", value = LongLastAggregatorFactory.class),
+      @JsonSubTypes.Type(name = "doubleLast", value = DoubleLastAggregatorFactory.class)
   })
   public static interface AggregatorFactoryMixin
   {
@@ -90,6 +104,7 @@ public class AggregatorsModule extends SimpleModule
       @JsonSubTypes.Type(name = "expression", value = ExpressionPostAggregator.class),
       @JsonSubTypes.Type(name = "arithmetic", value = ArithmeticPostAggregator.class),
       @JsonSubTypes.Type(name = "fieldAccess", value = FieldAccessPostAggregator.class),
+      @JsonSubTypes.Type(name = "finalizingFieldAccess", value = FinalizingFieldAccessPostAggregator.class),
       @JsonSubTypes.Type(name = "constant", value = ConstantPostAggregator.class),
       @JsonSubTypes.Type(name = "javascript", value = JavaScriptPostAggregator.class),
       @JsonSubTypes.Type(name = "hyperUniqueCardinality", value = HyperUniqueFinalizingPostAggregator.class),

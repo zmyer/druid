@@ -23,12 +23,15 @@ import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 import io.druid.collections.bitmap.ImmutableBitmap;
+import io.druid.common.guava.SettableSupplier;
 import io.druid.common.utils.JodaUtils;
 import io.druid.data.input.InputRow;
-import io.druid.granularity.QueryGranularities;
 import io.druid.java.util.common.Pair;
+import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.query.aggregation.Aggregator;
@@ -39,8 +42,9 @@ import io.druid.query.filter.BitmapIndexSelector;
 import io.druid.query.filter.DimFilter;
 import io.druid.query.filter.Filter;
 import io.druid.query.filter.ValueMatcher;
-import io.druid.query.filter.ValueMatcherFactory;
-import io.druid.query.groupby.RowBasedValueMatcherFactory;
+import io.druid.query.groupby.RowBasedColumnSelectorFactory;
+import io.druid.segment.ColumnSelector;
+import io.druid.segment.ColumnSelectorFactory;
 import io.druid.segment.Cursor;
 import io.druid.segment.DimensionSelector;
 import io.druid.segment.IndexBuilder;
@@ -50,13 +54,16 @@ import io.druid.segment.QueryableIndex;
 import io.druid.segment.QueryableIndexStorageAdapter;
 import io.druid.segment.StorageAdapter;
 import io.druid.segment.TestHelper;
+import io.druid.segment.VirtualColumn;
 import io.druid.segment.VirtualColumns;
+import io.druid.segment.column.ValueType;
 import io.druid.segment.data.BitmapSerdeFactory;
 import io.druid.segment.data.ConciseBitmapSerdeFactory;
 import io.druid.segment.data.IndexedInts;
 import io.druid.segment.data.RoaringBitmapSerdeFactory;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
+import io.druid.segment.virtual.ExpressionVirtualColumn;
 import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
@@ -74,6 +81,12 @@ import java.util.Map;
 
 public abstract class BaseFilterTest
 {
+  private static final VirtualColumns VIRTUAL_COLUMNS = VirtualColumns.create(
+      ImmutableList.<VirtualColumn>of(
+          new ExpressionVirtualColumn("expr", "1.0 + 0.1")
+      )
+  );
+
   @Rule
   public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
@@ -286,15 +299,13 @@ public abstract class BaseFilterTest
 
   private Sequence<Cursor> makeCursorSequence(final Filter filter)
   {
-    final Sequence<Cursor> cursors = adapter.makeCursors(
+    return adapter.makeCursors(
         filter,
         new Interval(JodaUtils.MIN_INSTANT, JodaUtils.MAX_INSTANT),
-        VirtualColumns.EMPTY,
-        QueryGranularities.ALL,
+        VIRTUAL_COLUMNS,
+        Granularities.ALL,
         false
     );
-
-    return cursors;
   }
 
   /**
@@ -371,7 +382,7 @@ public abstract class BaseFilterTest
       }
 
       @Override
-      public ValueMatcher makeMatcher(ValueMatcherFactory factory)
+      public ValueMatcher makeMatcher(ColumnSelectorFactory factory)
       {
         return theFilter.makeMatcher(factory);
       }
@@ -380,6 +391,20 @@ public abstract class BaseFilterTest
       public boolean supportsBitmapIndex(BitmapIndexSelector selector)
       {
         return false;
+      }
+
+      @Override
+      public boolean supportsSelectivityEstimation(
+          ColumnSelector columnSelector, BitmapIndexSelector indexSelector
+      )
+      {
+        return false;
+      }
+
+      @Override
+      public double estimateSelectivity(BitmapIndexSelector indexSelector)
+      {
+        return 1.0;
       }
     };
 
@@ -411,16 +436,25 @@ public abstract class BaseFilterTest
     return Sequences.toList(seq, new ArrayList<List<String>>()).get(0);
   }
 
-  private List<String> selectColumnValuesMatchingFilterUsingRowBasedValueMatcherFactory(
+  private List<String> selectColumnValuesMatchingFilterUsingRowBasedColumnSelectorFactory(
       final DimFilter filter,
       final String selectColumn
   )
   {
-    final RowBasedValueMatcherFactory matcherFactory = new RowBasedValueMatcherFactory();
-    final ValueMatcher matcher = makeFilter(filter).makeMatcher(matcherFactory);
+    // Generate rowType
+    final Map<String, ValueType> rowSignature = Maps.newHashMap();
+    for (String columnName : Iterables.concat(adapter.getAvailableDimensions(), adapter.getAvailableMetrics())) {
+      rowSignature.put(columnName, adapter.getColumnCapabilities(columnName).getType());
+    }
+
+    // Perform test
+    final SettableSupplier<InputRow> rowSupplier = new SettableSupplier<>();
+    final ValueMatcher matcher = makeFilter(filter).makeMatcher(
+        VIRTUAL_COLUMNS.wrap(RowBasedColumnSelectorFactory.create(rowSupplier, rowSignature))
+    );
     final List<String> values = Lists.newArrayList();
     for (InputRow row : rows) {
-      matcherFactory.setRow(row);
+      rowSupplier.set(row);
       if (matcher.matches()) {
         values.add((String) row.getRaw(selectColumn));
       }
@@ -449,9 +483,9 @@ public abstract class BaseFilterTest
         selectCountUsingFilteredAggregator(filter)
     );
     Assert.assertEquals(
-        "RowBasedValueMatcherFactory: " + filter.toString(),
+        "RowBasedColumnSelectorFactory: " + filter.toString(),
         expectedRows,
-        selectColumnValuesMatchingFilterUsingRowBasedValueMatcherFactory(filter, "dim0")
+        selectColumnValuesMatchingFilterUsingRowBasedColumnSelectorFactory(filter, "dim0")
     );
   }
 }

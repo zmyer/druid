@@ -42,7 +42,7 @@ import io.druid.concurrent.Execs;
 import io.druid.concurrent.TaskThreadPriority;
 import io.druid.data.input.Committer;
 import io.druid.data.input.InputRow;
-import io.druid.java.util.common.Granularity;
+import io.druid.java.util.common.granularity.Granularity;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.Pair;
 import io.druid.java.util.common.concurrent.ScheduledExecutors;
@@ -204,7 +204,9 @@ public class RealtimePlumber implements Plumber
   @Override
   public int add(InputRow row, Supplier<Committer> committerSupplier) throws IndexSizeExceededException
   {
-    final Sink sink = getSink(row.getTimestampFromEpoch());
+    long messageTimestamp = row.getTimestampFromEpoch();
+    final Sink sink = getSink(messageTimestamp);
+    metrics.reportMessageMaxTimestamp(messageTimestamp);
     if (sink == null) {
       return -1;
     }
@@ -227,7 +229,7 @@ public class RealtimePlumber implements Plumber
     final Granularity segmentGranularity = schema.getGranularitySpec().getSegmentGranularity();
     final VersioningPolicy versioningPolicy = config.getVersioningPolicy();
 
-    final long truncatedTime = segmentGranularity.truncate(new DateTime(timestamp)).getMillis();
+    final long truncatedTime = segmentGranularity.bucketStart(new DateTime(timestamp)).getMillis();
 
     Sink retVal = sinks.get(truncatedTime);
 
@@ -716,6 +718,7 @@ public class RealtimePlumber implements Plumber
   private void addSink(final Sink sink)
   {
     sinks.put(sink.getInterval().getStartMillis(), sink);
+    metrics.setSinkCount(sinks.size());
     sinkTimeline.add(
         sink.getInterval(),
         sink.getVersion(),
@@ -736,7 +739,7 @@ public class RealtimePlumber implements Plumber
     final Granularity segmentGranularity = schema.getGranularitySpec().getSegmentGranularity();
     final Period windowPeriod = config.getWindowPeriod();
 
-    final DateTime truncatedNow = segmentGranularity.truncate(new DateTime());
+    final DateTime truncatedNow = segmentGranularity.bucketStart(new DateTime());
     final long windowMillis = windowPeriod.toStandardDuration().getMillis();
 
     log.info(
@@ -793,7 +796,7 @@ public class RealtimePlumber implements Plumber
 
     final long windowMillis = windowPeriod.toStandardDuration().getMillis();
     log.info("Starting merge and push.");
-    DateTime minTimestampAsDate = segmentGranularity.truncate(
+    DateTime minTimestampAsDate = segmentGranularity.bucketStart(
         new DateTime(
             Math.max(
                 windowMillis,
@@ -850,6 +853,7 @@ public class RealtimePlumber implements Plumber
         removeSegment(sink, computePersistDir(schema, sink.getInterval()));
         log.info("Removing sinkKey %d for segment %s", truncatedTime, sink.getSegment().getIdentifier());
         sinks.remove(truncatedTime);
+        metrics.setSinkCount(sinks.size());
         sinkTimeline.remove(
             sink.getInterval(),
             sink.getVersion(),

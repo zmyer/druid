@@ -38,6 +38,7 @@ public class DerbyConnector extends SQLMetadataConnector
 {
   private static final Logger log = new Logger(DerbyConnector.class);
   private static final String SERIAL_TYPE = "BIGINT GENERATED ALWAYS AS IDENTITY (START WITH 1, INCREMENT BY 1)";
+  private static final String QUOTE_STRING = "\\\"";
   private final DBI dbi;
   private final MetadataStorage storage;
 
@@ -56,7 +57,7 @@ public class DerbyConnector extends SQLMetadataConnector
 
     this.dbi = new DBI(datasource);
     this.storage = storage;
-    log.info("Configured Derby as metadata storage");
+    log.info("Derby connector instantiated with metadata storage [%s].", this.storage.getClass().getName());
   }
 
   public DerbyConnector(
@@ -87,6 +88,11 @@ public class DerbyConnector extends SQLMetadataConnector
   }
 
   @Override
+  public String getQuoteString() {
+    return QUOTE_STRING;
+  }
+
+  @Override
   public DBI getDBI() { return dbi; }
 
   @Override
@@ -102,12 +108,14 @@ public class DerbyConnector extends SQLMetadataConnector
   @LifecycleStart
   public void start()
   {
+    log.info("Starting DerbyConnector...");
     storage.start();
   }
 
   @LifecycleStop
   public void stop()
   {
+    log.info("Stopping DerbyConnector...");
     storage.stop();
   }
 }

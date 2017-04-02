@@ -63,7 +63,9 @@ import io.druid.indexing.overlord.TaskRunnerWorkItem;
 import io.druid.indexing.overlord.TaskStorage;
 import io.druid.indexing.overlord.supervisor.Supervisor;
 import io.druid.indexing.overlord.supervisor.SupervisorReport;
+import io.druid.java.util.common.IAE;
 import io.druid.java.util.common.ISE;
+import io.druid.java.util.common.collect.JavaCompatUtils;
 import io.druid.metadata.EntryExistsException;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.apache.kafka.clients.consumer.KafkaConsumer;
@@ -73,12 +75,14 @@ import org.apache.kafka.common.serialization.ByteArrayDeserializer;
 import org.joda.time.DateTime;
 
 import javax.annotation.Nullable;
+import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -133,6 +137,11 @@ public class KafkaSupervisor implements Supervisor
     {
       this.partitionOffsets = partitionOffsets;
       this.minimumMessageTime = minimumMessageTime;
+    }
+
+    Set<String> taskIds()
+    {
+      return JavaCompatUtils.keySet(tasks);
     }
   }
 
@@ -306,7 +315,7 @@ public class KafkaSupervisor implements Supervisor
                     try {
                       notice.handle();
                     }
-                    catch (Exception e) {
+                    catch (Throwable e) {
                       log.makeAlert(e, "KafkaSupervisor[%s] failed to handle notice", dataSource)
                          .addData("noticeClass", notice.getClass().getSimpleName())
                          .emit();
@@ -410,10 +419,10 @@ public class KafkaSupervisor implements Supervisor
   }
 
   @Override
-  public void reset()
+  public void reset(DataSourceMetadata dataSourceMetadata)
   {
     log.info("Posting ResetNotice");
-    notices.add(new ResetNotice());
+    notices.add(new ResetNotice(dataSourceMetadata));
   }
 
   public void possiblyRegisterListener()
@@ -499,29 +508,113 @@ public class KafkaSupervisor implements Supervisor
 
   private class ResetNotice implements Notice
   {
+    final DataSourceMetadata dataSourceMetadata;
+
+    ResetNotice(DataSourceMetadata dataSourceMetadata)
+    {
+      this.dataSourceMetadata = dataSourceMetadata;
+    }
+
     @Override
     public void handle()
     {
-      resetInternal();
+      log.makeAlert("Resetting dataSource [%s]", dataSource).emit();
+      resetInternal(dataSourceMetadata);
     }
   }
 
   @VisibleForTesting
-  void resetInternal()
+  void resetInternal(DataSourceMetadata dataSourceMetadata)
   {
-    boolean result = indexerMetadataStorageCoordinator.deleteDataSourceMetadata(dataSource);
-    log.info("Reset dataSource[%s] - dataSource metadata entry deleted? [%s]", dataSource, result);
+    if (dataSourceMetadata == null) {
+      // Reset everything
+      boolean result = indexerMetadataStorageCoordinator.deleteDataSourceMetadata(dataSource);
+      log.info("Reset dataSource[%s] - dataSource metadata entry deleted? [%s]", dataSource, result);
+      killTaskGroupForPartitions(JavaCompatUtils.keySet(taskGroups));
+    } else if (!(dataSourceMetadata instanceof KafkaDataSourceMetadata)) {
+      throw new IAE("Expected KafkaDataSourceMetadata but found instance of [%s]", dataSourceMetadata.getClass());
+    } else {
+      // Reset only the partitions in dataSourceMetadata if it has not been reset yet
+      final KafkaDataSourceMetadata resetKafkaMetadata = (KafkaDataSourceMetadata) dataSourceMetadata;
 
-    for (TaskGroup taskGroup : taskGroups.values()) {
-      for (Map.Entry<String, TaskData> entry : taskGroup.tasks.entrySet()) {
-        String taskId = entry.getKey();
-        log.info("Reset dataSource[%s] - killing task [%s]", dataSource, taskId);
-        killTask(taskId);
+      if (resetKafkaMetadata.getKafkaPartitions().getTopic().equals(ioConfig.getTopic())) {
+        // metadata can be null
+        final DataSourceMetadata metadata = indexerMetadataStorageCoordinator.getDataSourceMetadata(dataSource);
+        if (metadata != null && !(metadata instanceof KafkaDataSourceMetadata)) {
+          throw new IAE(
+              "Expected KafkaDataSourceMetadata from metadata store but found instance of [%s]",
+              metadata.getClass()
+          );
+        }
+        final KafkaDataSourceMetadata currentMetadata = (KafkaDataSourceMetadata) metadata;
+
+        // defend against consecutive reset requests from replicas
+        // as well as the case where the metadata store do not have an entry for the reset partitions
+        boolean doReset = false;
+        for (Map.Entry<Integer, Long> resetPartitionOffset : resetKafkaMetadata.getKafkaPartitions()
+                                                                               .getPartitionOffsetMap()
+                                                                               .entrySet()) {
+          final Long partitionOffsetInMetadataStore = currentMetadata == null
+                                                      ? null
+                                                      : currentMetadata.getKafkaPartitions()
+                                                                       .getPartitionOffsetMap()
+                                                                       .get(resetPartitionOffset.getKey());
+          final TaskGroup partitionTaskGroup = taskGroups.get(getTaskGroupIdForPartition(resetPartitionOffset.getKey()));
+          if (partitionOffsetInMetadataStore != null ||
+              (partitionTaskGroup != null && partitionTaskGroup.partitionOffsets.get(resetPartitionOffset.getKey())
+                                                                                .equals(resetPartitionOffset.getValue()))) {
+            doReset = true;
+            break;
+          }
+        }
+
+        if (!doReset) {
+          return;
+        }
+
+        boolean metadataUpdateSuccess = false;
+        if (currentMetadata == null) {
+          metadataUpdateSuccess = true;
+        } else {
+          final DataSourceMetadata newMetadata = currentMetadata.minus(resetKafkaMetadata);
+          try {
+            metadataUpdateSuccess = indexerMetadataStorageCoordinator.resetDataSourceMetadata(dataSource, newMetadata);
+          }
+          catch (IOException e) {
+            log.error("Resetting DataSourceMetadata failed [%s]", e.getMessage());
+            Throwables.propagate(e);
+          }
+        }
+        if (metadataUpdateSuccess) {
+          killTaskGroupForPartitions(JavaCompatUtils.keySet(resetKafkaMetadata.getKafkaPartitions()
+                                                                              .getPartitionOffsetMap()));
+        } else {
+          throw new ISE("Unable to reset metadata");
+        }
+      } else {
+        log.warn(
+            "Reset metadata topic [%s] and supervisor's topic [%s] do not match",
+            resetKafkaMetadata.getKafkaPartitions().getTopic(),
+            ioConfig.getTopic()
+        );
       }
     }
+  }
 
-    partitionGroups.clear();
-    taskGroups.clear();
+  private void killTaskGroupForPartitions(Set<Integer> partitions)
+  {
+    for (Integer partition : partitions) {
+      TaskGroup taskGroup = taskGroups.get(getTaskGroupIdForPartition(partition));
+      if (taskGroup != null) {
+        // kill all tasks in this task group
+        for (String taskId : JavaCompatUtils.keySet(taskGroup.tasks)) {
+          log.info("Reset dataSource[%s] - killing task [%s]", dataSource, taskId);
+          killTask(taskId);
+        }
+      }
+      partitionGroups.remove(getTaskGroupIdForPartition(partition));
+      taskGroups.remove(getTaskGroupIdForPartition(partition));
+    }
   }
 
   @VisibleForTesting
@@ -951,9 +1044,9 @@ public class KafkaSupervisor implements Supervisor
         log.warn(
             "All tasks in group [%s] failed to transition to publishing state, killing tasks [%s]",
             groupId,
-            group.tasks.keySet()
+            group.taskIds()
         );
-        for (String id : group.tasks.keySet()) {
+        for (String id : group.taskIds()) {
           killTask(id);
         }
       }
@@ -1003,7 +1096,7 @@ public class KafkaSupervisor implements Supervisor
 
     // 2) Pause running tasks
     final List<ListenableFuture<Map<Integer, Long>>> pauseFutures = Lists.newArrayList();
-    final List<String> pauseTaskIds = ImmutableList.copyOf(taskGroup.tasks.keySet());
+    final List<String> pauseTaskIds = ImmutableList.copyOf(taskGroup.taskIds());
     for (final String taskId : pauseTaskIds) {
       pauseFutures.add(taskClient.pauseAsync(taskId));
     }
@@ -1039,7 +1132,7 @@ public class KafkaSupervisor implements Supervisor
             // 4) Set the end offsets for each task to the values from step 3 and resume the tasks. All the tasks should
             //    finish reading and start publishing within a short period, depending on how in sync the tasks were.
             final List<ListenableFuture<Boolean>> setEndOffsetFutures = Lists.newArrayList();
-            final List<String> setEndOffsetTaskIds = ImmutableList.copyOf(taskGroup.tasks.keySet());
+            final List<String> setEndOffsetTaskIds = ImmutableList.copyOf(taskGroup.taskIds());
 
             if (setEndOffsetTaskIds.isEmpty()) {
               log.info("All tasks in taskGroup [%d] have failed, tasks will be re-created", groupId);
@@ -1124,7 +1217,7 @@ public class KafkaSupervisor implements Supervisor
           if (task.getValue().status.isSuccess()) {
             // If one of the pending completion tasks was successful, stop the rest of the tasks in the group as
             // we no longer need them to publish their segment.
-            log.info("Task [%s] completed successfully, stopping tasks %s", task.getKey(), group.tasks.keySet());
+            log.info("Task [%s] completed successfully, stopping tasks %s", task.getKey(), group.taskIds());
             futures.add(stopTasksInGroup(group));
             foundSuccess = true;
             toRemove.add(group); // remove the TaskGroup from the list of pending completion task groups
@@ -1138,7 +1231,7 @@ public class KafkaSupervisor implements Supervisor
           } else {
             log.makeAlert(
                 "No task in [%s] succeeded before the completion timeout elapsed [%s]!",
-                group.tasks.keySet(),
+                group.taskIds(),
                 ioConfig.getCompletionTimeout()
             ).emit();
           }
@@ -1181,7 +1274,7 @@ public class KafkaSupervisor implements Supervisor
       //   2) Remove any tasks that have failed from the list
       //   3) If any task completed successfully, stop all the tasks in this group and move to the next group
 
-      log.debug("Task group [%d] pre-pruning: %s", groupId, taskGroup.tasks.keySet());
+      log.debug("Task group [%d] pre-pruning: %s", groupId, taskGroup.taskIds());
 
       Iterator<Map.Entry<String, TaskData>> iTasks = taskGroup.tasks.entrySet().iterator();
       while (iTasks.hasNext()) {
@@ -1211,7 +1304,7 @@ public class KafkaSupervisor implements Supervisor
           break;
         }
       }
-      log.debug("Task group [%d] post-pruning: %s", groupId, taskGroup.tasks.keySet());
+      log.debug("Task group [%d] post-pruning: %s", groupId, taskGroup.taskIds());
     }
 
     // wait for all task shutdowns to complete before returning
@@ -1221,9 +1314,13 @@ public class KafkaSupervisor implements Supervisor
   void createNewTasks()
   {
     // check that there is a current task group for each group of partitions in [partitionGroups]
-    for (Integer groupId : partitionGroups.keySet()) {
+    for (Integer groupId : JavaCompatUtils.keySet(partitionGroups)) {
       if (!taskGroups.containsKey(groupId)) {
-        log.info("Creating new task group [%d] for partitions %s", groupId, partitionGroups.get(groupId).keySet());
+        log.info(
+            "Creating new task group [%d] for partitions %s",
+            groupId,
+            JavaCompatUtils.keySet(partitionGroups.get(groupId))
+        );
 
         Optional<DateTime> minimumMessageTime = (ioConfig.getLateMessageRejectionPeriod().isPresent() ? Optional.of(
             DateTime.now().minus(ioConfig.getLateMessageRejectionPeriod().get())
@@ -1276,8 +1373,7 @@ public class KafkaSupervisor implements Supervisor
         consumerProperties,
         true,
         false,
-        minimumMessageTime,
-        ioConfig.isUseEarliestOffset()
+        minimumMessageTime
     );
 
     for (int i = 0; i < replicas; i++) {
