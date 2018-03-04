@@ -45,9 +45,9 @@ public class IncrementalIndexMultiValueSpecTest
   {
     DimensionsSpec dimensionsSpec = new DimensionsSpec(
         Arrays.<DimensionSchema>asList(
-            new StringDimensionSchema("string1", DimensionSchema.MultiValueHandling.ARRAY),
-            new StringDimensionSchema("string2", DimensionSchema.MultiValueHandling.SORTED_ARRAY),
-            new StringDimensionSchema("string3", DimensionSchema.MultiValueHandling.SORTED_SET)
+            new StringDimensionSchema("string1", DimensionSchema.MultiValueHandling.ARRAY, true),
+            new StringDimensionSchema("string2", DimensionSchema.MultiValueHandling.SORTED_ARRAY, true),
+            new StringDimensionSchema("string3", DimensionSchema.MultiValueHandling.SORTED_SET, true)
         ),
         null, null
     );
@@ -77,7 +77,10 @@ public class IncrementalIndexMultiValueSpecTest
         return null;
       }
     };
-    IncrementalIndex<?> index = new OnheapIncrementalIndex(schema, true, 10000);
+    IncrementalIndex<?> index = new IncrementalIndex.Builder()
+        .setIndexSchema(schema)
+        .setMaxRowCount(10000)
+        .buildOnheap();
     index.add(
         new MapBasedInputRow(
             0, Arrays.asList(

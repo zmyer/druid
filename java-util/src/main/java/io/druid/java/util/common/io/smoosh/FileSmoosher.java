@@ -25,12 +25,14 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.ByteStreams;
-import com.google.common.io.Closer;
 import com.google.common.primitives.Ints;
 import io.druid.java.util.common.FileUtils;
 import io.druid.java.util.common.IAE;
+import io.druid.java.util.common.IOE;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.MappedByteBufferHandler;
+import io.druid.java.util.common.StringUtils;
+import io.druid.java.util.common.io.Closer;
 import io.druid.java.util.common.logger.Logger;
 
 import java.io.BufferedWriter;
@@ -44,9 +46,11 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.channels.GatheringByteChannel;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
-import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -107,12 +111,12 @@ public class FileSmoosher implements Closeable
 
   static File metaFile(File baseDir)
   {
-    return new File(baseDir, String.format("meta.%s", FILE_EXTENSION));
+    return new File(baseDir, StringUtils.format("meta.%s", FILE_EXTENSION));
   }
 
   static File makeChunkFile(File baseDir, int i)
   {
-    return new File(baseDir, String.format("%05d.%s", i, FILE_EXTENSION));
+    return new File(baseDir, StringUtils.format("%05d.%s", i, FILE_EXTENSION));
   }
 
   public Set<String> getInternalFilenames()
@@ -134,7 +138,7 @@ public class FileSmoosher implements Closeable
 
   public void add(String name, ByteBuffer bufferToAdd) throws IOException
   {
-    add(name, Arrays.asList(bufferToAdd));
+    add(name, Collections.singletonList(bufferToAdd));
   }
 
   public void add(String name, List<ByteBuffer> bufferToAdd) throws IOException
@@ -243,9 +247,7 @@ public class FileSmoosher implements Closeable
           throw new ISE("WTF? Perhaps there is some concurrent modification going on?");
         }
         if (bytesWritten != size) {
-          throw new IOException(
-              String.format("Expected [%,d] bytes, only saw [%,d], potential corruption?", size, bytesWritten)
-          );
+          throw new IOE("Expected [%,d] bytes, only saw [%,d], potential corruption?", size, bytesWritten);
         }
         // Merge temporary files on to the main smoosh file.
         mergeWithSmoosher();
@@ -291,21 +293,20 @@ public class FileSmoosher implements Closeable
 
     return new SmooshedWriter()
     {
-      private final FileOutputStream out = new FileOutputStream(tmpFile);
-      private final GatheringByteChannel channel = out.getChannel();
-      private final Closer closer = Closer.create();
+      private final GatheringByteChannel channel =
+          FileChannel.open(
+              tmpFile.toPath(),
+              StandardOpenOption.WRITE,
+              StandardOpenOption.CREATE,
+              StandardOpenOption.TRUNCATE_EXISTING
+          );
 
       private int currOffset = 0;
-
-      {
-        closer.register(out);
-        closer.register(channel);
-      }
 
       @Override
       public void close() throws IOException
       {
-        closer.close();
+        channel.close();
         completedFiles.add(tmpFile);
         filesInProcess.remove(tmpFile);
 
@@ -391,7 +392,7 @@ public class FileSmoosher implements Closeable
     File metaFile = metaFile(baseDir);
 
     try (Writer out = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(metaFile), Charsets.UTF_8))) {
-      out.write(String.format("v1,%d,%d", maxChunkSize, outFiles.size()));
+      out.write(StringUtils.format("v1,%d,%d", maxChunkSize, outFiles.size()));
       out.write("\n");
 
       for (Map.Entry<String, Metadata> entry : internalFiles.entrySet()) {

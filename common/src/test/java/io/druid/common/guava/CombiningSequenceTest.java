@@ -29,7 +29,6 @@ import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.java.util.common.guava.Yielder;
 import io.druid.java.util.common.guava.YieldingAccumulator;
-import io.druid.java.util.common.guava.nary.BinaryFn;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -40,6 +39,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -92,11 +92,11 @@ public class CombiningSequenceTest
   @Test
   public void testNoMergeOne() throws Exception
   {
-    List<Pair<Integer, Integer>> pairs = Arrays.asList(
+    List<Pair<Integer, Integer>> pairs = Collections.singletonList(
         Pair.of(0, 1)
     );
 
-    List<Pair<Integer, Integer>> expected = Arrays.asList(
+    List<Pair<Integer, Integer>> expected = Collections.singletonList(
         Pair.of(0, 1)
     );
 
@@ -151,7 +151,7 @@ public class CombiningSequenceTest
         Pair.of(0, 1)
     );
 
-    List<Pair<Integer, Integer>> expected = Arrays.asList(
+    List<Pair<Integer, Integer>> expected = Collections.singletonList(
         Pair.of(0, 2)
     );
 
@@ -227,33 +227,23 @@ public class CombiningSequenceTest
       }
     };
 
-    Sequence<Pair<Integer, Integer>> seq = Sequences.limit(
-        CombiningSequence.create(
-            Sequences.withBaggage(Sequences.simple(pairs), closeable),
-            Ordering.natural().onResultOf(Pair.<Integer, Integer>lhsFn()),
-            new BinaryFn<Pair<Integer, Integer>, Pair<Integer, Integer>, Pair<Integer, Integer>>()
-            {
-              @Override
-              public Pair<Integer, Integer> apply(
-                  Pair<Integer, Integer> lhs, Pair<Integer, Integer> rhs
-              )
-              {
-                if (lhs == null) {
-                  return rhs;
-                }
+    Sequence<Pair<Integer, Integer>> seq = CombiningSequence.create(
+        Sequences.simple(pairs).withBaggage(closeable),
+        Ordering.natural().onResultOf(Pair.lhsFn()),
+        (lhs, rhs) -> {
+          if (lhs == null) {
+            return rhs;
+          }
 
-                if (rhs == null) {
-                  return lhs;
-                }
+          if (rhs == null) {
+            return lhs;
+          }
 
-                return Pair.of(lhs.lhs, lhs.rhs + rhs.rhs);
-              }
-            }
-        ),
-        limit
-    );
+          return Pair.of(lhs.lhs, lhs.rhs + rhs.rhs);
+        }
+    ).limit(limit);
 
-    List<Pair<Integer, Integer>> merged = Sequences.toList(seq, Lists.<Pair<Integer, Integer>>newArrayList());
+    List<Pair<Integer, Integer>> merged = seq.toList();
 
     Assert.assertEquals(expected, merged);
 

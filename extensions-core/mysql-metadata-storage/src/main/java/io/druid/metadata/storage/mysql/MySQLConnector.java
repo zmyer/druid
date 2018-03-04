@@ -19,12 +19,14 @@
 
 package io.druid.metadata.storage.mysql;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableList;
 import com.google.inject.Inject;
 import com.mysql.jdbc.exceptions.MySQLTransientException;
 
 import io.druid.java.util.common.ISE;
+import io.druid.java.util.common.StringUtils;
 import io.druid.java.util.common.logger.Logger;
 import io.druid.metadata.MetadataStorageConnectorConfig;
 import io.druid.metadata.MetadataStorageTablesConfig;
@@ -35,6 +37,7 @@ import org.skife.jdbi.v2.Handle;
 import org.skife.jdbi.v2.tweak.HandleCallback;
 import org.skife.jdbi.v2.util.BooleanMapper;
 
+import java.io.File;
 import java.sql.SQLException;
 
 public class MySQLConnector extends SQLMetadataConnector
@@ -47,7 +50,11 @@ public class MySQLConnector extends SQLMetadataConnector
   private final DBI dbi;
 
   @Inject
-  public MySQLConnector(Supplier<MetadataStorageConnectorConfig> config, Supplier<MetadataStorageTablesConfig> dbTables)
+  public MySQLConnector(
+      Supplier<MetadataStorageConnectorConfig> config,
+      Supplier<MetadataStorageTablesConfig> dbTables,
+      MySQLConnectorConfig connectorConfig
+  )
   {
     super(config, dbTables);
 
@@ -56,6 +63,68 @@ public class MySQLConnector extends SQLMetadataConnector
     // so we need to help JDBC find the driver
     datasource.setDriverClassLoader(getClass().getClassLoader());
     datasource.setDriverClassName("com.mysql.jdbc.Driver");
+    datasource.addConnectionProperty("useSSL", String.valueOf(connectorConfig.isUseSSL()));
+    if (connectorConfig.isUseSSL()) {
+      log.info("SSL is enabled on this MySQL connection. ");
+
+      datasource.addConnectionProperty(
+          "verifyServerCertificate",
+          String.valueOf(connectorConfig.isVerifyServerCertificate())
+      );
+      if (connectorConfig.isVerifyServerCertificate()) {
+        log.info("Server certificate verification is enabled. ");
+
+        if (connectorConfig.getTrustCertificateKeyStoreUrl() != null) {
+          datasource.addConnectionProperty(
+              "trustCertificateKeyStoreUrl",
+              new File(connectorConfig.getTrustCertificateKeyStoreUrl()).toURI().toString()
+          );
+        }
+        if (connectorConfig.getTrustCertificateKeyStoreType() != null) {
+          datasource.addConnectionProperty(
+              "trustCertificateKeyStoreType",
+              connectorConfig.getTrustCertificateKeyStoreType()
+          );
+        }
+        if (connectorConfig.getTrustCertificateKeyStorePassword() == null) {
+          log.warn(
+              "Trust store password is empty. Ensure that the trust store has been configured with an empty password.");
+        } else {
+          datasource.addConnectionProperty(
+              "trustCertificateKeyStorePassword",
+              connectorConfig.getTrustCertificateKeyStorePassword()
+          );
+        }
+      }
+      if (connectorConfig.getClientCertificateKeyStoreUrl() != null) {
+        datasource.addConnectionProperty(
+            "clientCertificateKeyStoreUrl",
+            new File(connectorConfig.getClientCertificateKeyStoreUrl()).toURI().toString()
+        );
+      }
+      if (connectorConfig.getClientCertificateKeyStoreType() != null) {
+        datasource.addConnectionProperty(
+            "clientCertificateKeyStoreType",
+            connectorConfig.getClientCertificateKeyStoreType()
+        );
+      }
+      if (connectorConfig.getClientCertificateKeyStorePassword() != null) {
+        datasource.addConnectionProperty(
+            "clientCertificateKeyStorePassword",
+            connectorConfig.getClientCertificateKeyStorePassword()
+        );
+      }
+      Joiner joiner = Joiner.on(",").skipNulls();
+      if (connectorConfig.getEnabledSSLCipherSuites() != null) {
+        datasource.addConnectionProperty(
+            "enabledSSLCipherSuites",
+            joiner.join(connectorConfig.getEnabledSSLCipherSuites())
+        );
+      }
+      if (connectorConfig.getEnabledTLSProtocols() != null) {
+        datasource.addConnectionProperty("enabledTLSProtocols", joiner.join(connectorConfig.getEnabledTLSProtocols()));
+      }
+    }
 
     // use double-quotes for quoting columns, so we can write SQL that works with most databases
     datasource.setConnectionInitSqls(ImmutableList.of("SET sql_mode='ANSI_QUOTES'"));
@@ -78,7 +147,8 @@ public class MySQLConnector extends SQLMetadataConnector
   }
 
   @Override
-  public String getQuoteString() {
+  public String getQuoteString()
+  {
     return QUOTE_STRING;
   }
 
@@ -95,9 +165,9 @@ public class MySQLConnector extends SQLMetadataConnector
   {
     // ensure database defaults to utf8, otherwise bail
     boolean isUtf8 = handle
-                         .createQuery("SELECT @@character_set_database = 'utf8'")
-                         .map(BooleanMapper.FIRST)
-                         .first();
+        .createQuery("SELECT @@character_set_database = 'utf8'")
+        .map(BooleanMapper.FIRST)
+        .first();
 
     if (!isUtf8) {
       throw new ISE(
@@ -135,7 +205,7 @@ public class MySQLConnector extends SQLMetadataConnector
           public Void withHandle(Handle handle) throws Exception
           {
             handle.createStatement(
-                String.format(
+                StringUtils.format(
                     "INSERT INTO %1$s (%2$s, %3$s) VALUES (:key, :value) ON DUPLICATE KEY UPDATE %3$s = :value",
                     tableName,
                     keyColumn,
@@ -152,5 +222,8 @@ public class MySQLConnector extends SQLMetadataConnector
   }
 
   @Override
-  public DBI getDBI() { return dbi; }
+  public DBI getDBI()
+  {
+    return dbi;
+  }
 }

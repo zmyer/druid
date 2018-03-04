@@ -24,79 +24,24 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
-import io.druid.java.util.common.ISE;
-import io.druid.java.util.common.guava.Sequence;
+import io.druid.guice.annotations.ExtensionPoint;
+import io.druid.java.util.common.granularity.Granularities;
+import io.druid.java.util.common.granularity.Granularity;
+import io.druid.java.util.common.granularity.PeriodGranularity;
 import io.druid.query.spec.QuerySegmentSpec;
+import org.joda.time.DateTimeZone;
 import org.joda.time.Duration;
 import org.joda.time.Interval;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  */
+@ExtensionPoint
 public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
 {
-  public static <T> int getContextPriority(Query<T> query, int defaultValue)
-  {
-    return parseInt(query, "priority", defaultValue);
-  }
-
-  public static <T> boolean getContextBySegment(Query<T> query, boolean defaultValue)
-  {
-    return parseBoolean(query, "bySegment", defaultValue);
-  }
-
-  public static <T> boolean getContextPopulateCache(Query<T> query, boolean defaultValue)
-  {
-    return parseBoolean(query, "populateCache", defaultValue);
-  }
-
-  public static <T> boolean getContextUseCache(Query<T> query, boolean defaultValue)
-  {
-    return parseBoolean(query, "useCache", defaultValue);
-  }
-
-  public static <T> boolean getContextFinalize(Query<T> query, boolean defaultValue)
-  {
-    return parseBoolean(query, "finalize", defaultValue);
-  }
-
-  public static <T> int getContextUncoveredIntervalsLimit(Query<T> query, int defaultValue)
-  {
-    return parseInt(query, "uncoveredIntervalsLimit", defaultValue);
-  }
-
-  private static <T> int parseInt(Query<T> query, String key, int defaultValue)
-  {
-    Object val = query.getContextValue(key);
-    if (val == null) {
-      return defaultValue;
-    }
-    if (val instanceof String) {
-      return Integer.parseInt((String) val);
-    } else if (val instanceof Integer) {
-      return (int) val;
-    } else {
-      throw new ISE("Unknown type [%s]", val.getClass());
-    }
-  }
-
-  private static <T> boolean parseBoolean(Query<T> query, String key, boolean defaultValue)
-  {
-    Object val = query.getContextValue(key);
-    if (val == null) {
-      return defaultValue;
-    }
-    if (val instanceof String) {
-      return Boolean.parseBoolean((String) val);
-    } else if (val instanceof Boolean) {
-      return (boolean) val;
-    } else {
-      throw new ISE("Unknown type [%s]. Cannot parse!", val.getClass());
-    }
-  }
-
   public static void checkInterrupted()
   {
     if (Thread.interrupted()) {
@@ -110,6 +55,7 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
   private final Map<String, Object> context;
   private final QuerySegmentSpec querySegmentSpec;
   private volatile Duration duration;
+  private final Granularity granularity;
 
   public BaseQuery(
       DataSource dataSource,
@@ -118,13 +64,26 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
       Map<String, Object> context
   )
   {
+    this(dataSource, querySegmentSpec, descending, context, Granularities.ALL);
+  }
+
+  public BaseQuery(
+      DataSource dataSource,
+      QuerySegmentSpec querySegmentSpec,
+      boolean descending,
+      Map<String, Object> context,
+      Granularity granularity
+  )
+  {
     Preconditions.checkNotNull(dataSource, "dataSource can't be null");
     Preconditions.checkNotNull(querySegmentSpec, "querySegmentSpec can't be null");
+    Preconditions.checkNotNull(granularity, "Must specify a granularity");
 
     this.dataSource = dataSource;
     this.context = context;
     this.querySegmentSpec = querySegmentSpec;
     this.descending = descending;
+    this.granularity = granularity;
   }
 
   @JsonProperty
@@ -148,14 +107,9 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
   }
 
   @Override
-  public Sequence<T> run(QuerySegmentWalker walker, Map<String, Object> context)
+  public QueryRunner<T> getRunner(QuerySegmentWalker walker)
   {
-    return run(querySegmentSpec.lookup(this, walker), context);
-  }
-
-  public Sequence<T> run(QueryRunner<T> runner, Map<String, Object> context)
-  {
-    return runner.run(this, context);
+    return querySegmentSpec.lookup(this, walker);
   }
 
   @Override
@@ -182,6 +136,21 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
 
   @Override
   @JsonProperty
+  public Granularity getGranularity()
+  {
+    return granularity;
+  }
+
+  @Override
+  public DateTimeZone getTimezone()
+  {
+    return granularity instanceof PeriodGranularity
+           ? ((PeriodGranularity) granularity).getTimeZone()
+           : DateTimeZone.UTC;
+  }
+
+  @Override
+  @JsonProperty
   public Map<String, Object> getContext()
   {
     return context;
@@ -203,13 +172,25 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
   @Override
   public boolean getContextBoolean(String key, boolean defaultValue)
   {
-    return parseBoolean(this, key, defaultValue);
+    return QueryContexts.parseBoolean(this, key, defaultValue);
   }
 
-  protected Map<String, Object> computeOverridenContext(Map<String, Object> overrides)
+  /**
+   * @deprecated use {@link #computeOverriddenContext(Map, Map) computeOverriddenContext(getContext(), overrides))}
+   * instead. This method may be removed in the next minor or major version of Druid.
+   */
+  @Deprecated
+  protected Map<String, Object> computeOverridenContext(final Map<String, Object> overrides)
+  {
+    return computeOverriddenContext(getContext(), overrides);
+  }
+
+  protected static Map<String, Object> computeOverriddenContext(
+      final Map<String, Object> context,
+      final Map<String, Object> overrides
+  )
   {
     Map<String, Object> overridden = Maps.newTreeMap();
-    final Map<String, Object> context = getContext();
     if (context != null) {
       overridden.putAll(context);
     }
@@ -234,7 +215,7 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
   @Override
   public Query withId(String id)
   {
-    return withOverriddenContext(ImmutableMap.<String, Object>of(QUERYID, id));
+    return withOverriddenContext(ImmutableMap.of(QUERYID, id));
   }
 
   @Override
@@ -246,38 +227,19 @@ public abstract class BaseQuery<T extends Comparable<T>> implements Query<T>
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-
-    BaseQuery baseQuery = (BaseQuery) o;
-
-    if (descending != baseQuery.descending) {
-      return false;
-    }
-    if (context != null ? !context.equals(baseQuery.context) : baseQuery.context != null) {
-      return false;
-    }
-    if (dataSource != null ? !dataSource.equals(baseQuery.dataSource) : baseQuery.dataSource != null) {
-      return false;
-    }
-    if (duration != null ? !duration.equals(baseQuery.duration) : baseQuery.duration != null) {
-      return false;
-    }
-    if (querySegmentSpec != null
-        ? !querySegmentSpec.equals(baseQuery.querySegmentSpec)
-        : baseQuery.querySegmentSpec != null) {
-      return false;
-    }
-
-    return true;
+    BaseQuery<?> baseQuery = (BaseQuery<?>) o;
+    return descending == baseQuery.descending &&
+           Objects.equals(dataSource, baseQuery.dataSource) &&
+           Objects.equals(context, baseQuery.context) &&
+           Objects.equals(querySegmentSpec, baseQuery.querySegmentSpec) &&
+           Objects.equals(duration, baseQuery.duration) &&
+           Objects.equals(granularity, baseQuery.granularity);
   }
 
   @Override
   public int hashCode()
   {
-    int result = dataSource != null ? dataSource.hashCode() : 0;
-    result = 31 * result + (descending ? 1 : 0);
-    result = 31 * result + (context != null ? context.hashCode() : 0);
-    result = 31 * result + (querySegmentSpec != null ? querySegmentSpec.hashCode() : 0);
-    result = 31 * result + (duration != null ? duration.hashCode() : 0);
-    return result;
+
+    return Objects.hash(dataSource, descending, context, querySegmentSpec, duration, granularity);
   }
 }

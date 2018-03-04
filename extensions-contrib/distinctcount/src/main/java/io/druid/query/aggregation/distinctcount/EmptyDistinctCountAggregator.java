@@ -34,11 +34,6 @@ public class EmptyDistinctCountAggregator implements Aggregator
   }
 
   @Override
-  public void reset()
-  {
-  }
-
-  @Override
   public Object get()
   {
     return 0L;
@@ -47,17 +42,23 @@ public class EmptyDistinctCountAggregator implements Aggregator
   @Override
   public float getFloat()
   {
-    return (float) 0;
-  }
-
-  @Override
-  public void close()
-  {
+    return 0.0f;
   }
 
   @Override
   public long getLong()
   {
-    return (long) 0;
+    return 0L;
+  }
+
+  @Override
+  public double getDouble()
+  {
+    return 0.0;
+  }
+
+  @Override
+  public void close()
+  {
   }
 }

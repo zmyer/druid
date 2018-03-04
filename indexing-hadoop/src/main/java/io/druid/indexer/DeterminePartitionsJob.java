@@ -37,7 +37,9 @@ import io.druid.collections.CombiningIterable;
 import io.druid.data.input.InputRow;
 import io.druid.data.input.Rows;
 import io.druid.indexer.partitions.SingleDimensionPartitionsSpec;
+import io.druid.java.util.common.DateTimes;
 import io.druid.java.util.common.ISE;
+import io.druid.java.util.common.StringUtils;
 import io.druid.java.util.common.granularity.Granularity;
 import io.druid.java.util.common.guava.nary.BinaryFn;
 import io.druid.java.util.common.logger.Logger;
@@ -66,6 +68,7 @@ import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 import org.joda.time.DateTime;
 import org.joda.time.Interval;
+import org.joda.time.chrono.ISOChronology;
 
 import java.io.IOException;
 import java.io.OutputStream;
@@ -104,6 +107,7 @@ public class DeterminePartitionsJob implements Jobby
     this.config = config;
   }
 
+  @Override
   public boolean run()
   {
     try {
@@ -122,7 +126,7 @@ public class DeterminePartitionsJob implements Jobby
       if (!config.getPartitionsSpec().isAssumeGrouped()) {
         final Job groupByJob = Job.getInstance(
             new Configuration(),
-            String.format("%s-determine_partitions_groupby-%s", config.getDataSource(), config.getIntervals())
+            StringUtils.format("%s-determine_partitions_groupby-%s", config.getDataSource(), config.getIntervals())
         );
 
         JobHelper.injectSystemProperties(groupByJob);
@@ -162,7 +166,7 @@ public class DeterminePartitionsJob implements Jobby
        */
       final Job dimSelectionJob = Job.getInstance(
           new Configuration(),
-          String.format("%s-determine_partitions_dimselection-%s", config.getDataSource(), config.getIntervals())
+          StringUtils.format("%s-determine_partitions_dimselection-%s", config.getDataSource(), config.getIntervals())
       );
 
       dimSelectionJob.getConfiguration().set("io.sort.record.percent", "0.19");
@@ -266,7 +270,6 @@ public class DeterminePartitionsJob implements Jobby
     @Override
     protected void innerMap(
         InputRow inputRow,
-        Object value,
         Context context,
         boolean reportParseExceptions
     ) throws IOException, InterruptedException
@@ -320,7 +323,7 @@ public class DeterminePartitionsJob implements Jobby
     {
       final List<Object> timeAndDims = HadoopDruidIndexerConfig.JSON_MAPPER.readValue(key.getBytes(), List.class);
 
-      final DateTime timestamp = new DateTime(timeAndDims.get(0));
+      final DateTime timestamp = new DateTime(timeAndDims.get(0), ISOChronology.getInstanceUTC());
       final Map<String, Iterable<String>> dims = (Map<String, Iterable<String>>) timeAndDims.get(1);
 
       helper.emitDimValueCounts(context, timestamp, dims);
@@ -348,7 +351,6 @@ public class DeterminePartitionsJob implements Jobby
     @Override
     protected void innerMap(
         InputRow inputRow,
-        Object value,
         Context context,
         boolean reportParseExceptions
     ) throws IOException, InterruptedException
@@ -357,7 +359,7 @@ public class DeterminePartitionsJob implements Jobby
       for (final String dim : inputRow.getDimensions()) {
         dims.put(dim, inputRow.getDimension(dim));
       }
-      helper.emitDimValueCounts(context, new DateTime(inputRow.getTimestampFromEpoch()), dims);
+      helper.emitDimValueCounts(context, DateTimes.utc(inputRow.getTimestampFromEpoch()), dims);
     }
   }
 
@@ -466,7 +468,7 @@ public class DeterminePartitionsJob implements Jobby
     }
   }
 
-  private static abstract class DeterminePartitionsDimSelectionBaseReducer
+  private abstract static class DeterminePartitionsDimSelectionBaseReducer
       extends Reducer<BytesWritable, Text, BytesWritable, Text>
   {
     protected volatile HadoopDruidIndexerConfig config = null;
@@ -564,7 +566,7 @@ public class DeterminePartitionsJob implements Jobby
     {
       final ByteBuffer groupKey = ByteBuffer.wrap(keyBytes.getGroupKey());
       groupKey.position(4); // Skip partition
-      final DateTime bucket = new DateTime(groupKey.getLong());
+      final DateTime bucket = DateTimes.utc(groupKey.getLong());
       final PeekingIterator<DimValueCount> iterator = Iterators.peekingIterator(combinedIterable.iterator());
 
       log.info(

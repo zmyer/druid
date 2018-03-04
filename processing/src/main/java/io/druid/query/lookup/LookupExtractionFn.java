@@ -37,18 +37,14 @@ public class LookupExtractionFn extends FunctionalExtraction
 {
   private final LookupExtractor lookup;
   private final boolean optimize;
-  // Thes are retained for auto generated hashCode and Equals
-  private final boolean retainMissingValue;
-  private final String replaceMissingValueWith;
-  private final boolean injective;
 
   @JsonCreator
   public LookupExtractionFn(
       @JsonProperty("lookup") final LookupExtractor lookup,
       @JsonProperty("retainMissingValue") final boolean retainMissingValue,
       @Nullable @JsonProperty("replaceMissingValueWith") final String replaceMissingValueWith,
-      @JsonProperty("injective") final boolean injective,
-      @JsonProperty("optimize") Boolean optimize
+      @JsonProperty("injective") final Boolean injective,
+      @JsonProperty("optimize") final Boolean optimize
   )
   {
     super(
@@ -63,13 +59,10 @@ public class LookupExtractionFn extends FunctionalExtraction
         },
         retainMissingValue,
         replaceMissingValueWith,
-        injective
+        injective != null ? injective : lookup.isOneToOne()
     );
     this.lookup = lookup;
     this.optimize = optimize == null ? true : optimize;
-    this.retainMissingValue = retainMissingValue;
-    this.injective = injective;
-    this.replaceMissingValueWith = replaceMissingValueWith;
   }
 
 
@@ -81,11 +74,17 @@ public class LookupExtractionFn extends FunctionalExtraction
 
   @Override
   @JsonProperty
-  public boolean isRetainMissingValue() {return super.isRetainMissingValue();}
+  public boolean isRetainMissingValue()
+  {
+    return super.isRetainMissingValue();
+  }
 
   @Override
   @JsonProperty
-  public String getReplaceMissingValueWith() {return super.getReplaceMissingValueWith();}
+  public String getReplaceMissingValueWith()
+  {
+    return super.getReplaceMissingValueWith();
+  }
 
   @Override
   @JsonProperty
@@ -161,5 +160,17 @@ public class LookupExtractionFn extends FunctionalExtraction
     result = 31 * result + (getReplaceMissingValueWith() != null ? getReplaceMissingValueWith().hashCode() : 0);
     result = 31 * result + (isInjective() ? 1 : 0);
     return result;
+  }
+
+  @Override
+  public String toString()
+  {
+    return "LookupExtractionFn{" +
+           "lookup=" + lookup +
+           ", optimize=" + optimize +
+           ", retainMissingValue=" + isRetainMissingValue() +
+           ", replaceMissingValueWith='" + getReplaceMissingValueWith() + '\'' +
+           ", injective=" + isInjective() +
+           '}';
   }
 }

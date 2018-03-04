@@ -26,6 +26,8 @@ import io.druid.timeline.DataSegment;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
+import java.util.Map;
 import java.util.Set;
 
 public class TestDataSegmentPusher implements DataSegmentPusher
@@ -46,10 +48,16 @@ public class TestDataSegmentPusher implements DataSegmentPusher
   }
 
   @Override
-  public DataSegment push(File file, DataSegment segment) throws IOException
+  public DataSegment push(File file, DataSegment segment, boolean replaceExisting) throws IOException
   {
     pushedSegments.add(segment);
     return segment;
+  }
+
+  @Override
+  public Map<String, Object> makeLoadSpec(URI uri)
+  {
+    throw new UnsupportedOperationException();
   }
 
   public Set<DataSegment> getPushedSegments()

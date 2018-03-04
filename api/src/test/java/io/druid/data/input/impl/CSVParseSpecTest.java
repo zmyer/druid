@@ -23,12 +23,14 @@ import com.google.common.collect.Lists;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 
 public class CSVParseSpecTest
 {
   @Test(expected = IllegalArgumentException.class)
   public void testColumnMissing() throws Exception
   {
+    @SuppressWarnings("unused") // expected exception
     final ParseSpec spec = new CSVParseSpec(
         new TimestampSpec(
             "timestamp",
@@ -41,13 +43,16 @@ public class CSVParseSpecTest
             Lists.<SpatialDimensionSchema>newArrayList()
         ),
         ",",
-        Arrays.asList("a")
+        Collections.singletonList("a"),
+        false,
+        0
     );
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testComma() throws Exception
   {
+    @SuppressWarnings("unused") // expected exception
     final ParseSpec spec = new CSVParseSpec(
         new TimestampSpec(
             "timestamp",
@@ -60,7 +65,9 @@ public class CSVParseSpecTest
             Lists.<SpatialDimensionSchema>newArrayList()
         ),
         ",",
-        Arrays.asList("a")
+        Collections.singletonList("a"),
+        false,
+        0
     );
   }
 }

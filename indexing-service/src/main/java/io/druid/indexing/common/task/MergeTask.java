@@ -28,6 +28,7 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import io.druid.indexing.common.TaskToolbox;
+import io.druid.segment.writeout.SegmentWriteOutMediumFactory;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.segment.IndexMerger;
 import io.druid.segment.IndexSpec;
@@ -43,12 +44,10 @@ import java.util.Map;
  */
 public class MergeTask extends MergeTaskBase
 {
-  private static final Boolean defaultBuildV9Directly = Boolean.TRUE;
   @JsonIgnore
   private final List<AggregatorFactory> aggregators;
   private final Boolean rollup;
   private final IndexSpec indexSpec;
-  private final Boolean buildV9Directly;
 
   @JsonCreator
   public MergeTask(
@@ -58,22 +57,23 @@ public class MergeTask extends MergeTaskBase
       @JsonProperty("aggregations") List<AggregatorFactory> aggregators,
       @JsonProperty("rollup") Boolean rollup,
       @JsonProperty("indexSpec") IndexSpec indexSpec,
+      // This parameter is left for compatibility when reading existing JSONs, to be removed in Druid 0.12.
       @JsonProperty("buildV9Directly") Boolean buildV9Directly,
+      @JsonProperty("segmentWriteOutMediumFactory") @Nullable SegmentWriteOutMediumFactory segmentWriteOutMediumFactory,
       @JsonProperty("context") Map<String, Object> context
   )
   {
-    super(id, dataSource, segments, context);
+    super(id, dataSource, segments, segmentWriteOutMediumFactory, context);
     this.aggregators = Preconditions.checkNotNull(aggregators, "null aggregations");
     this.rollup = rollup == null ? Boolean.TRUE : rollup;
     this.indexSpec = indexSpec == null ? new IndexSpec() : indexSpec;
-    this.buildV9Directly = buildV9Directly == null ? defaultBuildV9Directly : buildV9Directly;
   }
 
   @Override
   public File merge(final TaskToolbox toolbox, final Map<DataSegment, File> segments, final File outDir)
       throws Exception
   {
-    IndexMerger indexMerger = buildV9Directly ? toolbox.getIndexMergerV9() : toolbox.getIndexMerger();
+    IndexMerger indexMerger = toolbox.getIndexMergerV9();
     return indexMerger.mergeQueryableIndex(
         Lists.transform(
             ImmutableList.copyOf(segments.values()),
@@ -94,7 +94,8 @@ public class MergeTask extends MergeTaskBase
         rollup,
         aggregators.toArray(new AggregatorFactory[aggregators.size()]),
         outDir,
-        indexSpec
+        indexSpec,
+        getSegmentWriteOutMediumFactory()
     );
   }
 

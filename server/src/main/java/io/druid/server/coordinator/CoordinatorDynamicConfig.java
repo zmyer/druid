@@ -21,13 +21,22 @@ package io.druid.server.coordinator;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.collect.ImmutableSet;
-
 import io.druid.java.util.common.IAE;
 
+import javax.annotation.Nullable;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeUnit;
 
+/**
+ * This class is for users to change their configurations while their Druid cluster is running.
+ * These configurations are designed to allow only simple values rather than complicated JSON objects.
+ *
+ * @see io.druid.common.config.JacksonConfigManager
+ * @see io.druid.common.config.ConfigManager
+ */
 public class CoordinatorDynamicConfig
 {
   public static final String CONFIG_KEY = "coordinator.config";
@@ -42,6 +51,17 @@ public class CoordinatorDynamicConfig
   private final boolean emitBalancingStats;
   private final boolean killAllDataSources;
   private final Set<String> killDataSourceWhitelist;
+
+  // The pending segments of the dataSources in this list are not killed.
+  private final Set<String> killPendingSegmentsSkipList;
+
+  /**
+   * The maximum number of segments that could be queued for loading to any given server.
+   * Default values is 0 with the meaning of "unbounded" (any number of
+   * segments could be added to the loading queue for any server).
+   * See {@link LoadQueuePeon}, {@link io.druid.server.coordinator.rules.LoadRule#run}
+   */
+  private final int maxSegmentsInNodeLoadingQueue;
 
   @JsonCreator
   public CoordinatorDynamicConfig(
@@ -58,37 +78,45 @@ public class CoordinatorDynamicConfig
       // coordinator console can not send array of strings in the update request.
       // See https://github.com/druid-io/druid/issues/3055
       @JsonProperty("killDataSourceWhitelist") Object killDataSourceWhitelist,
-      @JsonProperty("killAllDataSources") boolean killAllDataSources
+      @JsonProperty("killAllDataSources") boolean killAllDataSources,
+      @JsonProperty("killPendingSegmentsSkipList") Object killPendingSegmentsSkipList,
+      @JsonProperty("maxSegmentsInNodeLoadingQueue") int maxSegmentsInNodeLoadingQueue
   )
   {
-    this.maxSegmentsToMove = maxSegmentsToMove;
     this.millisToWaitBeforeDeleting = millisToWaitBeforeDeleting;
-    this.mergeSegmentsLimit = mergeSegmentsLimit;
     this.mergeBytesLimit = mergeBytesLimit;
+    this.mergeSegmentsLimit = mergeSegmentsLimit;
+    this.maxSegmentsToMove = maxSegmentsToMove;
     this.replicantLifetime = replicantLifetime;
     this.replicationThrottleLimit = replicationThrottleLimit;
-    this.emitBalancingStats = emitBalancingStats;
     this.balancerComputeThreads = Math.max(balancerComputeThreads, 1);
-
+    this.emitBalancingStats = emitBalancingStats;
     this.killAllDataSources = killAllDataSources;
-
-    if (killDataSourceWhitelist instanceof String) {
-      String[] tmp = ((String) killDataSourceWhitelist).split(",");
-      this.killDataSourceWhitelist = new HashSet<>();
-      for (int i = 0; i < tmp.length; i++) {
-        String trimmed = tmp[i].trim();
-        if (!trimmed.isEmpty()) {
-          this.killDataSourceWhitelist.add(trimmed);
-        }
-      }
-    } else if (killDataSourceWhitelist instanceof Collection){
-      this.killDataSourceWhitelist = ImmutableSet.copyOf(((Collection) killDataSourceWhitelist));
-    } else {
-      this.killDataSourceWhitelist = ImmutableSet.of();
-    }
+    this.killDataSourceWhitelist = parseJsonStringOrArray(killDataSourceWhitelist);
+    this.killPendingSegmentsSkipList = parseJsonStringOrArray(killPendingSegmentsSkipList);
+    this.maxSegmentsInNodeLoadingQueue = maxSegmentsInNodeLoadingQueue;
 
     if (this.killAllDataSources && !this.killDataSourceWhitelist.isEmpty()) {
       throw new IAE("can't have killAllDataSources and non-empty killDataSourceWhitelist");
+    }
+  }
+
+  private static Set<String> parseJsonStringOrArray(Object jsonStringOrArray)
+  {
+    if (jsonStringOrArray instanceof String) {
+      String[] list = ((String) jsonStringOrArray).split(",");
+      Set<String> result = new HashSet<>();
+      for (String item : list) {
+        String trimmed = item.trim();
+        if (!trimmed.isEmpty()) {
+          result.add(trimmed);
+        }
+      }
+      return result;
+    } else if (jsonStringOrArray instanceof Collection) {
+      return ImmutableSet.copyOf(((Collection) jsonStringOrArray));
+    } else {
+      return ImmutableSet.of();
     }
   }
 
@@ -152,6 +180,18 @@ public class CoordinatorDynamicConfig
     return killAllDataSources;
   }
 
+  @JsonProperty
+  public Set<String> getKillPendingSegmentsSkipList()
+  {
+    return killPendingSegmentsSkipList;
+  }
+
+  @JsonProperty
+  public int getMaxSegmentsInNodeLoadingQueue()
+  {
+    return maxSegmentsInNodeLoadingQueue;
+  }
+
   @Override
   public String toString()
   {
@@ -166,6 +206,8 @@ public class CoordinatorDynamicConfig
            ", emitBalancingStats=" + emitBalancingStats +
            ", killDataSourceWhitelist=" + killDataSourceWhitelist +
            ", killAllDataSources=" + killAllDataSources +
+           ", killPendingSegmentsSkipList=" + killPendingSegmentsSkipList +
+           ", maxSegmentsInNodeLoadingQueue=" + maxSegmentsInNodeLoadingQueue +
            '}';
   }
 
@@ -208,57 +250,83 @@ public class CoordinatorDynamicConfig
     if (killAllDataSources != that.killAllDataSources) {
       return false;
     }
-    return !(killDataSourceWhitelist != null
-             ? !killDataSourceWhitelist.equals(that.killDataSourceWhitelist)
-             : that.killDataSourceWhitelist != null);
-
+    if (maxSegmentsInNodeLoadingQueue != that.maxSegmentsInNodeLoadingQueue) {
+      return false;
+    }
+    if (!Objects.equals(killDataSourceWhitelist, that.killDataSourceWhitelist)) {
+      return false;
+    }
+    return Objects.equals(killPendingSegmentsSkipList, that.killPendingSegmentsSkipList);
   }
 
   @Override
   public int hashCode()
   {
-    int result = (int) (millisToWaitBeforeDeleting ^ (millisToWaitBeforeDeleting >>> 32));
-    result = 31 * result + (int) (mergeBytesLimit ^ (mergeBytesLimit >>> 32));
-    result = 31 * result + mergeSegmentsLimit;
-    result = 31 * result + maxSegmentsToMove;
-    result = 31 * result + replicantLifetime;
-    result = 31 * result + replicationThrottleLimit;
-    result = 31 * result + balancerComputeThreads;
-    result = 31 * result + (emitBalancingStats ? 1 : 0);
-    result = 31 * result + (killAllDataSources ? 1 : 0);
-    result = 31 * result + (killDataSourceWhitelist != null ? killDataSourceWhitelist.hashCode() : 0);
-    return result;
+    return Objects.hash(
+        millisToWaitBeforeDeleting,
+        mergeBytesLimit,
+        mergeSegmentsLimit,
+        maxSegmentsToMove,
+        replicantLifetime,
+        replicationThrottleLimit,
+        balancerComputeThreads,
+        emitBalancingStats,
+        killAllDataSources,
+        maxSegmentsInNodeLoadingQueue,
+        killDataSourceWhitelist,
+        killPendingSegmentsSkipList
+    );
+  }
+
+  public static Builder builder()
+  {
+    return new Builder();
   }
 
   public static class Builder
   {
-    private long millisToWaitBeforeDeleting;
-    private long mergeBytesLimit;
-    private int mergeSegmentsLimit;
-    private int maxSegmentsToMove;
-    private int replicantLifetime;
-    private int replicationThrottleLimit;
-    private boolean emitBalancingStats;
-    private int balancerComputeThreads;
-    private Set<String> killDataSourceWhitelist;
-    private boolean killAllDataSources;
+    private static final long DEFAULT_MILLIS_TO_WAIT_BEFORE_DELETING = TimeUnit.MINUTES.toMillis(15);
+    private static final long DEFAULT_MERGE_BYTES_LIMIT = 524288000L;
+    private static final int DEFAULT_MERGE_SEGMENTS_LIMIT = 100;
+    private static final int DEFAULT_MAX_SEGMENTS_TO_MOVE = 5;
+    private static final int DEFAULT_REPLICANT_LIFETIME = 15;
+    private static final int DEFAULT_REPLICATION_THROTTLE_LIMIT = 10;
+    private static final int DEFAULT_BALANCER_COMPUTE_THREADS = 1;
+    private static final boolean DEFAULT_EMIT_BALANCING_STATS = false;
+    private static final boolean DEFAULT_KILL_ALL_DATA_SOURCES = false;
+    private static final int DEFAULT_MAX_SEGMENTS_IN_NODE_LOADING_QUEUE = 0;
+
+    private Long millisToWaitBeforeDeleting;
+    private Long mergeBytesLimit;
+    private Integer mergeSegmentsLimit;
+    private Integer maxSegmentsToMove;
+    private Integer replicantLifetime;
+    private Integer replicationThrottleLimit;
+    private Boolean emitBalancingStats;
+    private Integer balancerComputeThreads;
+    private Object killDataSourceWhitelist;
+    private Boolean killAllDataSources;
+    private Object killPendingSegmentsSkipList;
+    private Integer maxSegmentsInNodeLoadingQueue;
 
     public Builder()
     {
-      this(15 * 60 * 1000L, 524288000L, 100, 5, 15, 10, 1, false, null, false);
     }
 
-    private Builder(
-        long millisToWaitBeforeDeleting,
-        long mergeBytesLimit,
-        int mergeSegmentsLimit,
-        int maxSegmentsToMove,
-        int replicantLifetime,
-        int replicationThrottleLimit,
-        int balancerComputeThreads,
-        boolean emitBalancingStats,
-        Set<String> killDataSourceWhitelist,
-        boolean killAllDataSources
+    @JsonCreator
+    public Builder(
+        @JsonProperty("millisToWaitBeforeDeleting") @Nullable Long millisToWaitBeforeDeleting,
+        @JsonProperty("mergeBytesLimit") @Nullable Long mergeBytesLimit,
+        @JsonProperty("mergeSegmentsLimit") @Nullable Integer mergeSegmentsLimit,
+        @JsonProperty("maxSegmentsToMove") @Nullable Integer maxSegmentsToMove,
+        @JsonProperty("replicantLifetime") @Nullable Integer replicantLifetime,
+        @JsonProperty("replicationThrottleLimit") @Nullable Integer replicationThrottleLimit,
+        @JsonProperty("balancerComputeThreads") @Nullable Integer balancerComputeThreads,
+        @JsonProperty("emitBalancingStats") @Nullable Boolean emitBalancingStats,
+        @JsonProperty("killDataSourceWhitelist") @Nullable Object killDataSourceWhitelist,
+        @JsonProperty("killAllDataSources") @Nullable Boolean killAllDataSources,
+        @JsonProperty("killPendingSegmentsSkipList") @Nullable Object killPendingSegmentsSkipList,
+        @JsonProperty("maxSegmentsInNodeLoadingQueue") @Nullable Integer maxSegmentsInNodeLoadingQueue
     )
     {
       this.millisToWaitBeforeDeleting = millisToWaitBeforeDeleting;
@@ -267,10 +335,12 @@ public class CoordinatorDynamicConfig
       this.maxSegmentsToMove = maxSegmentsToMove;
       this.replicantLifetime = replicantLifetime;
       this.replicationThrottleLimit = replicationThrottleLimit;
-      this.emitBalancingStats = emitBalancingStats;
       this.balancerComputeThreads = balancerComputeThreads;
-      this.killDataSourceWhitelist = killDataSourceWhitelist;
+      this.emitBalancingStats = emitBalancingStats;
       this.killAllDataSources = killAllDataSources;
+      this.killDataSourceWhitelist = killDataSourceWhitelist;
+      this.killPendingSegmentsSkipList = killPendingSegmentsSkipList;
+      this.maxSegmentsInNodeLoadingQueue = maxSegmentsInNodeLoadingQueue;
     }
 
     public Builder withMillisToWaitBeforeDeleting(long millisToWaitBeforeDeleting)
@@ -315,25 +385,63 @@ public class CoordinatorDynamicConfig
       return this;
     }
 
+    public Builder withEmitBalancingStats(boolean emitBalancingStats)
+    {
+      this.emitBalancingStats = emitBalancingStats;
+      return this;
+    }
+
     public Builder withKillDataSourceWhitelist(Set<String> killDataSourceWhitelist)
     {
       this.killDataSourceWhitelist = killDataSourceWhitelist;
       return this;
     }
 
+    public Builder withKillAllDataSources(boolean killAllDataSources)
+    {
+      this.killAllDataSources = killAllDataSources;
+      return this;
+    }
+
+    public Builder withMaxSegmentsInNodeLoadingQueue(int maxSegmentsInNodeLoadingQueue)
+    {
+      this.maxSegmentsInNodeLoadingQueue = maxSegmentsInNodeLoadingQueue;
+      return this;
+    }
+
     public CoordinatorDynamicConfig build()
     {
       return new CoordinatorDynamicConfig(
-          millisToWaitBeforeDeleting,
-          mergeBytesLimit,
-          mergeSegmentsLimit,
-          maxSegmentsToMove,
-          replicantLifetime,
-          replicationThrottleLimit,
-          balancerComputeThreads,
-          emitBalancingStats,
+          millisToWaitBeforeDeleting == null ? DEFAULT_MILLIS_TO_WAIT_BEFORE_DELETING : millisToWaitBeforeDeleting,
+          mergeBytesLimit == null ? DEFAULT_MERGE_BYTES_LIMIT : mergeBytesLimit,
+          mergeSegmentsLimit == null ? DEFAULT_MERGE_SEGMENTS_LIMIT : mergeSegmentsLimit,
+          maxSegmentsToMove == null ? DEFAULT_MAX_SEGMENTS_TO_MOVE : maxSegmentsToMove,
+          replicantLifetime == null ? DEFAULT_REPLICANT_LIFETIME : replicantLifetime,
+          replicationThrottleLimit == null ? DEFAULT_REPLICATION_THROTTLE_LIMIT : replicationThrottleLimit,
+          balancerComputeThreads == null ? DEFAULT_BALANCER_COMPUTE_THREADS : balancerComputeThreads,
+          emitBalancingStats == null ? DEFAULT_EMIT_BALANCING_STATS : emitBalancingStats,
           killDataSourceWhitelist,
-          killAllDataSources
+          killAllDataSources == null ? DEFAULT_KILL_ALL_DATA_SOURCES : killAllDataSources,
+          killPendingSegmentsSkipList,
+          maxSegmentsInNodeLoadingQueue == null ? DEFAULT_MAX_SEGMENTS_IN_NODE_LOADING_QUEUE : maxSegmentsInNodeLoadingQueue
+      );
+    }
+
+    public CoordinatorDynamicConfig build(CoordinatorDynamicConfig defaults)
+    {
+      return new CoordinatorDynamicConfig(
+          millisToWaitBeforeDeleting == null ? defaults.getMillisToWaitBeforeDeleting() : millisToWaitBeforeDeleting,
+          mergeBytesLimit == null ? defaults.getMergeBytesLimit() : mergeBytesLimit,
+          mergeSegmentsLimit == null ? defaults.getMergeSegmentsLimit() : mergeSegmentsLimit,
+          maxSegmentsToMove == null ? defaults.getMaxSegmentsToMove() : maxSegmentsToMove,
+          replicantLifetime == null ? defaults.getReplicantLifetime() : replicantLifetime,
+          replicationThrottleLimit == null ? defaults.getReplicationThrottleLimit() : replicationThrottleLimit,
+          balancerComputeThreads == null ? defaults.getBalancerComputeThreads() : balancerComputeThreads,
+          emitBalancingStats == null ? defaults.emitBalancingStats() : emitBalancingStats,
+          killDataSourceWhitelist == null ? defaults.getKillDataSourceWhitelist() : killDataSourceWhitelist,
+          killAllDataSources == null ? defaults.isKillAllDataSources() : killAllDataSources,
+          killPendingSegmentsSkipList == null ? defaults.getKillPendingSegmentsSkipList() : killPendingSegmentsSkipList,
+          maxSegmentsInNodeLoadingQueue == null ? defaults.getMaxSegmentsInNodeLoadingQueue() : maxSegmentsInNodeLoadingQueue
       );
     }
   }

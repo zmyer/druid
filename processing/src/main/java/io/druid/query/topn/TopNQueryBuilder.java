@@ -60,7 +60,7 @@ import java.util.Map;
  *                                  .build();
  * </code></pre>
  *
- * @see io.druid.query.topn.TopNQuery
+ * @see TopNQuery
  */
 public class TopNQueryBuilder
 {
@@ -93,72 +93,17 @@ public class TopNQueryBuilder
 
   public TopNQueryBuilder(final TopNQuery query)
   {
-      this.dataSource = query.getDataSource();
-      this.virtualColumns = query.getVirtualColumns();
-      this.dimensionSpec = query.getDimensionSpec();
-      this.topNMetricSpec = query.getTopNMetricSpec();
-      this.threshold = query.getThreshold();
-      this.querySegmentSpec = query.getQuerySegmentSpec();
-      this.dimFilter = query.getDimensionsFilter();
-      this.granularity = query.getGranularity();
-      this.aggregatorSpecs = query.getAggregatorSpecs();
-      this.postAggregatorSpecs = query.getPostAggregatorSpecs();
-      this.context = query.getContext();
-  }
-
-  public DataSource getDataSource()
-  {
-    return dataSource;
-  }
-
-  public VirtualColumns getVirtualColumns()
-  {
-    return virtualColumns;
-  }
-
-  public DimensionSpec getDimensionSpec()
-  {
-    return dimensionSpec;
-  }
-
-  public TopNMetricSpec getTopNMetricSpec()
-  {
-    return topNMetricSpec;
-  }
-
-  public int getThreshold()
-  {
-    return threshold;
-  }
-
-  public QuerySegmentSpec getQuerySegmentSpec()
-  {
-    return querySegmentSpec;
-  }
-
-  public DimFilter getDimFilter()
-  {
-    return dimFilter;
-  }
-
-  public Granularity getGranularity()
-  {
-    return granularity;
-  }
-
-  public List<AggregatorFactory> getAggregatorSpecs()
-  {
-    return aggregatorSpecs;
-  }
-
-  public List<PostAggregator> getPostAggregatorSpecs()
-  {
-    return postAggregatorSpecs;
-  }
-
-  public Map<String, Object> getContext()
-  {
-    return context;
+    this.dataSource = query.getDataSource();
+    this.virtualColumns = query.getVirtualColumns();
+    this.dimensionSpec = query.getDimensionSpec();
+    this.topNMetricSpec = query.getTopNMetricSpec();
+    this.threshold = query.getThreshold();
+    this.querySegmentSpec = query.getQuerySegmentSpec();
+    this.dimFilter = query.getDimensionsFilter();
+    this.granularity = query.getGranularity();
+    this.aggregatorSpecs = query.getAggregatorSpecs();
+    this.postAggregatorSpecs = query.getPostAggregatorSpecs();
+    this.context = query.getContext();
   }
 
   public TopNQuery build()
@@ -211,11 +156,6 @@ public class TopNQueryBuilder
   {
     this.virtualColumns = virtualColumns;
     return this;
-  }
-
-  public TopNQueryBuilder virtualColumns(List<VirtualColumn> virtualColumns)
-  {
-    return virtualColumns(VirtualColumns.create(virtualColumns));
   }
 
   public TopNQueryBuilder virtualColumns(VirtualColumn... virtualColumns)
@@ -298,12 +238,6 @@ public class TopNQueryBuilder
     return this;
   }
 
-  public TopNQueryBuilder granularity(String g)
-  {
-    granularity = Granularity.fromString(g);
-    return this;
-  }
-
   public TopNQueryBuilder granularity(Granularity g)
   {
     granularity = g;
@@ -328,4 +262,5 @@ public class TopNQueryBuilder
     context = c;
     return this;
   }
+
 }

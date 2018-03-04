@@ -22,10 +22,11 @@ package io.druid.segment;
 import io.druid.collections.bitmap.BitmapFactory;
 import io.druid.collections.bitmap.MutableBitmap;
 import io.druid.query.dimension.DimensionSpec;
-import io.druid.segment.column.ValueType;
 import io.druid.segment.data.Indexed;
 import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
+import io.druid.segment.incremental.TimeAndDimsHolder;
+
+import javax.annotation.Nullable;
 
 /**
  * Processing related interface
@@ -66,7 +67,6 @@ import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
  * persisted segments.
  *
  * Note that after calling the methods below that deal with sorted encodings,
- * - getSortedEncodedValueFromUnsorted()
  * - getUnsortedEncodedValueFromSorted()
  * - getSortedIndexedValues()
  * - convertUnsortedEncodedKeyComponentToSortedEncodedKeyComponent()
@@ -109,10 +109,6 @@ import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
 public interface DimensionIndexer
     <EncodedType extends Comparable<EncodedType>, EncodedKeyComponentType, ActualType extends Comparable<ActualType>>
 {
-  /**
-   * @return The ValueType corresponding to this dimension indexer's ActualType.
-   */
-  ValueType getValueType();
 
   /**
    * Given a single row value or list of row values (for multi-valued dimensions), update any internal data structures
@@ -126,22 +122,10 @@ public interface DimensionIndexer
    *
    * @param dimValues Single row val to process
    *
+   * @param reportParseExceptions
    * @return An array containing an encoded representation of the input row value.
    */
-  EncodedKeyComponentType processRowValsToUnsortedEncodedKeyComponent(Object dimValues);
-
-
-  /**
-   * Given an encoded value that was ordered by time of ingestion, return the equivalent
-   * encoded value ordered by associated actual value.
-   *
-   * Using the example in the class description:
-   *   getSortedEncodedValueFromUnsorted(0) would return 2
-   *
-   * @param unsortedIntermediateValue value to convert
-   * @return converted value
-   */
-  EncodedType getSortedEncodedValueFromUnsorted(EncodedType unsortedIntermediateValue);
+  EncodedKeyComponentType processRowValsToUnsortedEncodedKeyComponent(Object dimValues, boolean reportParseExceptions);
 
 
   /**
@@ -215,51 +199,18 @@ public interface DimensionIndexer
    */
   DimensionSelector makeDimensionSelector(
       DimensionSpec spec,
-      IncrementalIndexStorageAdapter.EntryHolder currEntry,
+      TimeAndDimsHolder currEntry,
       IncrementalIndex.DimensionDesc desc
   );
 
-
   /**
-   * Return an object used to read values from this indexer's column as Longs.
+   * Return an object used to read values from this indexer's column.
    *
    * @param currEntry Provides access to the current TimeAndDims object in the Cursor
    * @param desc Descriptor object for this dimension within an IncrementalIndex
    * @return A new object that reads rows from currEntry
    */
-  LongColumnSelector makeLongColumnSelector(
-      IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      IncrementalIndex.DimensionDesc desc
-  );
-
-
-  /**
-   * Return an object used to read values from this indexer's column as Floats.
-   *
-   * @param currEntry Provides access to the current TimeAndDims object in the Cursor
-   * @param desc Descriptor object for this dimension within an IncrementalIndex
-   * @return A new object that reads rows from currEntry
-   */
-  FloatColumnSelector makeFloatColumnSelector(
-      IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      IncrementalIndex.DimensionDesc desc
-  );
-
-
-  /**
-   * Return an object used to read values from this indexer's column as Objects.
-   *
-   * @param spec Specifies the output name of a dimension and any extraction functions to be applied.
-   * @param currEntry Provides access to the current TimeAndDims object in the Cursor
-   * @param desc Descriptor object for this dimension within an IncrementalIndex
-   * @return A new object that reads rows from currEntry
-   */
-  ObjectColumnSelector makeObjectColumnSelector(
-      DimensionSpec spec,
-      IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      IncrementalIndex.DimensionDesc desc
-  );
-
+  ColumnValueSelector<?> makeColumnValueSelector(TimeAndDimsHolder currEntry, IncrementalIndex.DimensionDesc desc);
 
   /**
    * Compares the row values for this DimensionIndexer's dimension from a TimeAndDims key.
@@ -283,7 +234,7 @@ public interface DimensionIndexer
    * @param rhs dimension value array from a TimeAndDims key
    * @return comparison of the two arrays
    */
-  int compareUnsortedEncodedKeyComponents(EncodedKeyComponentType lhs, EncodedKeyComponentType rhs);
+  int compareUnsortedEncodedKeyComponents(@Nullable EncodedKeyComponentType lhs, @Nullable EncodedKeyComponentType rhs);
 
 
   /**
@@ -293,7 +244,7 @@ public interface DimensionIndexer
    * @param rhs dimension value array from a TimeAndDims key
    * @return true if the two arrays are equal
    */
-  boolean checkUnsortedEncodedKeyComponentsEqual(EncodedKeyComponentType lhs, EncodedKeyComponentType rhs);
+  boolean checkUnsortedEncodedKeyComponentsEqual(@Nullable EncodedKeyComponentType lhs, @Nullable EncodedKeyComponentType rhs);
 
 
   /**
@@ -301,7 +252,7 @@ public interface DimensionIndexer
    * @param key dimension value array from a TimeAndDims key
    * @return hashcode of the array
    */
-  int getUnsortedEncodedKeyComponentHashCode(EncodedKeyComponentType key);
+  int getUnsortedEncodedKeyComponentHashCode(@Nullable EncodedKeyComponentType key);
 
   boolean LIST = true;
   boolean ARRAY = false;

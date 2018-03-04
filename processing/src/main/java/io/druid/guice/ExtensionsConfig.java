@@ -22,7 +22,7 @@ package io.druid.guice;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import javax.validation.constraints.NotNull;
-import java.util.List;
+import java.util.LinkedHashSet;
 
 /**
  */
@@ -36,13 +36,20 @@ public class ExtensionsConfig
   private String directory = "extensions";
 
   @JsonProperty
+  private boolean useExtensionClassloaderFirst = false;
+
+  @JsonProperty
   private String hadoopDependenciesDir = "hadoop-dependencies";
 
   @JsonProperty
   private String hadoopContainerDruidClasspath = null;
 
+  //Only applicable when hadoopContainerDruidClasspath is explicitly specified.
   @JsonProperty
-  private List<String> loadList;
+  private boolean addExtensionsToHadoopContainer = false;
+
+  @JsonProperty
+  private LinkedHashSet<String> loadList;
 
   public boolean searchCurrentClassloader()
   {
@@ -52,6 +59,11 @@ public class ExtensionsConfig
   public String getDirectory()
   {
     return directory;
+  }
+
+  public boolean isUseExtensionClassloaderFirst()
+  {
+    return useExtensionClassloaderFirst;
   }
 
   public String getHadoopDependenciesDir()
@@ -64,7 +76,12 @@ public class ExtensionsConfig
     return hadoopContainerDruidClasspath;
   }
 
-  public List<String> getLoadList()
+  public boolean getAddExtensionsToHadoopContainer()
+  {
+    return addExtensionsToHadoopContainer;
+  }
+
+  public LinkedHashSet<String> getLoadList()
   {
     return loadList;
   }
@@ -75,8 +92,10 @@ public class ExtensionsConfig
     return "ExtensionsConfig{" +
            "searchCurrentClassloader=" + searchCurrentClassloader +
            ", directory='" + directory + '\'' +
+           ", useExtensionClassloaderFirst=" + useExtensionClassloaderFirst +
            ", hadoopDependenciesDir='" + hadoopDependenciesDir + '\'' +
            ", hadoopContainerDruidClasspath='" + hadoopContainerDruidClasspath + '\'' +
+           ", addExtensionsToHadoopContainer=" + addExtensionsToHadoopContainer +
            ", loadList=" + loadList +
            '}';
   }

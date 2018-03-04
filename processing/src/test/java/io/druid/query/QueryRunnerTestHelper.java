@@ -24,11 +24,11 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
-import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.MoreExecutors;
-import com.metamx.emitter.core.NoopEmitter;
-import com.metamx.emitter.service.ServiceEmitter;
-import io.druid.java.util.common.UOE;
+import io.druid.java.util.emitter.core.NoopEmitter;
+import io.druid.java.util.emitter.service.ServiceEmitter;
+import io.druid.java.util.common.DateTimes;
+import io.druid.java.util.common.Intervals;
 import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.granularity.Granularity;
 import io.druid.java.util.common.guava.MergeSequence;
@@ -38,6 +38,7 @@ import io.druid.js.JavaScriptConfig;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.aggregation.DoubleSumAggregatorFactory;
+import io.druid.query.aggregation.FloatSumAggregatorFactory;
 import io.druid.query.aggregation.JavaScriptAggregatorFactory;
 import io.druid.query.aggregation.LongSumAggregatorFactory;
 import io.druid.query.aggregation.cardinality.CardinalityAggregatorFactory;
@@ -51,7 +52,6 @@ import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.spec.MultipleIntervalSegmentSpec;
 import io.druid.query.spec.QuerySegmentSpec;
 import io.druid.query.spec.SpecificSegmentSpec;
-import io.druid.query.timeseries.TimeseriesQuery;
 import io.druid.query.timeseries.TimeseriesQueryEngine;
 import io.druid.query.timeseries.TimeseriesQueryQueryToolChest;
 import io.druid.query.timeseries.TimeseriesQueryRunnerFactory;
@@ -73,6 +73,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -81,14 +82,7 @@ import java.util.Map;
 public class QueryRunnerTestHelper
 {
 
-  public static final QueryWatcher NOOP_QUERYWATCHER = new QueryWatcher()
-  {
-    @Override
-    public void registerQuery(Query query, ListenableFuture future)
-    {
-
-    }
-  };
+  public static final QueryWatcher NOOP_QUERYWATCHER = (query, future) -> {};
 
   public static final String segmentId = "testSegment";
   public static final String dataSource = "testing";
@@ -105,8 +99,6 @@ public class QueryRunnerTestHelper
           }
       )
   );
-
-  public static final DateTime minTime = new DateTime("2011-01-12T00:00:00.000Z");
 
   public static final Granularity dayGran = Granularities.DAY;
   public static final Granularity allGran = Granularities.ALL;
@@ -127,8 +119,6 @@ public class QueryRunnerTestHelper
   public static final String indexMetric = "index";
   public static final String uniqueMetric = "uniques";
   public static final String addRowsIndexConstantMetric = "addRowsIndexConstant";
-  public static final List<String> metrics = Lists.newArrayList(indexMetric, uniqueMetric, addRowsIndexConstantMetric);
-
   public static String dependentPostAggMetric = "dependentPostAgg";
   public static final CountAggregatorFactory rowsCount = new CountAggregatorFactory("rows");
   public static final LongSumAggregatorFactory indexLongSum = new LongSumAggregatorFactory("index", indexMetric);
@@ -148,7 +138,7 @@ public class QueryRunnerTestHelper
       "ntimestamps",
       Arrays.asList("__time"),
       "function aggregate(current, t) { if (t > " +
-      new DateTime("2011-04-01T12:00:00Z").getMillis() +
+      DateTimes.of("2011-04-01T12:00:00Z").getMillis() +
       ") { return current + 1; } else { return current; } }",
       JS_RESET_0,
       JS_COMBINE_A_PLUS_B,
@@ -165,6 +155,12 @@ public class QueryRunnerTestHelper
   public static final HyperUniquesAggregatorFactory qualityUniques = new HyperUniquesAggregatorFactory(
       "uniques",
       "quality_uniques"
+  );
+  public static final HyperUniquesAggregatorFactory qualityUniquesRounded = new HyperUniquesAggregatorFactory(
+      "uniques",
+      "quality_uniques",
+      false,
+      true
   );
   public static final CardinalityAggregatorFactory qualityCardinality = new CardinalityAggregatorFactory(
       "cardinality",
@@ -199,10 +195,19 @@ public class QueryRunnerTestHelper
       )
   );
 
-  public static final List<AggregatorFactory> commonAggregators = Arrays.asList(
+  public static final List<AggregatorFactory> commonDoubleAggregators = Arrays.asList(
       rowsCount,
       indexDoubleSum,
       qualityUniques
+  );
+
+  public static final List<AggregatorFactory> commonFloatAggregators = Arrays.asList(
+      new FloatSumAggregatorFactory("index", "indexFloat"),
+      new CountAggregatorFactory("rows"),
+      new HyperUniquesAggregatorFactory(
+          "uniques",
+          "quality_uniques"
+      )
   );
 
   public static final double UNIQUES_9 = 9.019833517963864;
@@ -239,22 +244,22 @@ public class QueryRunnerTestHelper
     expectedFullOnIndexValuesDesc = list.toArray(new String[list.size()]);
   }
 
-  public static final DateTime earliest = new DateTime("2011-01-12");
-  public static final DateTime last = new DateTime("2011-04-15");
+  public static final DateTime earliest = DateTimes.of("2011-01-12");
+  public static final DateTime last = DateTimes.of("2011-04-15");
 
-  public static final DateTime skippedDay = new DateTime("2011-01-21T00:00:00.000Z");
+  public static final DateTime skippedDay = DateTimes.of("2011-01-21T00:00:00.000Z");
 
   public static final QuerySegmentSpec firstToThird = new MultipleIntervalSegmentSpec(
-      Arrays.asList(new Interval("2011-04-01T00:00:00.000Z/2011-04-03T00:00:00.000Z"))
+      Arrays.asList(Intervals.of("2011-04-01T00:00:00.000Z/2011-04-03T00:00:00.000Z"))
   );
   public static final QuerySegmentSpec secondOnly = new MultipleIntervalSegmentSpec(
-      Arrays.asList(new Interval("2011-04-02T00:00:00.000Z/P1D"))
+      Arrays.asList(Intervals.of("2011-04-02T00:00:00.000Z/P1D"))
   );
   public static final QuerySegmentSpec fullOnInterval = new MultipleIntervalSegmentSpec(
-      Arrays.asList(new Interval("1970-01-01T00:00:00.000Z/2020-01-01T00:00:00.000Z"))
+      Arrays.asList(Intervals.of("1970-01-01T00:00:00.000Z/2020-01-01T00:00:00.000Z"))
   );
   public static final QuerySegmentSpec emptyInterval = new MultipleIntervalSegmentSpec(
-      Arrays.asList(new Interval("2020-04-02T00:00:00.000Z/P1D"))
+      Arrays.asList(Intervals.of("2020-04-02T00:00:00.000Z/P1D"))
   );
 
   public static Iterable<Object[]> transformToConstructionFeeder(Iterable<?> in)
@@ -357,8 +362,7 @@ public class QueryRunnerTestHelper
 
   @SuppressWarnings("unchecked")
   public static Collection<?> makeUnionQueryRunners(
-      QueryRunnerFactory factory,
-      DataSource unionDataSource
+      QueryRunnerFactory factory
   )
       throws IOException
   {
@@ -375,63 +379,6 @@ public class QueryRunnerTestHelper
             "mergedRealtimeIndex"
         )
     );
-  }
-
-  /**
-   * Iterate through the iterables in a synchronous manner and return each step as an Object[]
-   *
-   * @param in The iterables to step through. (effectively columns)
-   *
-   * @return An iterable of Object[] containing the "rows" of the input (effectively rows)
-   */
-  public static Iterable<Object[]> transformToConstructionFeeder(Iterable<?>... in)
-  {
-    if (in == null) {
-      return ImmutableList.<Object[]>of();
-    }
-    final List<Iterable<?>> iterables = Arrays.asList(in);
-    final int length = in.length;
-    final List<Iterator<?>> iterators = new ArrayList<>(in.length);
-    for (Iterable<?> iterable : iterables) {
-      iterators.add(iterable.iterator());
-    }
-    return new Iterable<Object[]>()
-    {
-      @Override
-      public Iterator<Object[]> iterator()
-      {
-        return new Iterator<Object[]>()
-        {
-          @Override
-          public boolean hasNext()
-          {
-            int hasMore = 0;
-            for (Iterator<?> it : iterators) {
-              if (it.hasNext()) {
-                ++hasMore;
-              }
-            }
-            return hasMore == length;
-          }
-
-          @Override
-          public Object[] next()
-          {
-            final ArrayList<Object> list = new ArrayList<Object>(length);
-            for (Iterator<?> it : iterators) {
-              list.add(it.next());
-            }
-            return list.toArray();
-          }
-
-          @Override
-          public void remove()
-          {
-            throw new UOE("Remove not supported");
-          }
-        };
-      }
-    };
   }
 
   public static <T, QueryType extends Query<T>> QueryRunner<T> makeQueryRunner(
@@ -501,9 +448,9 @@ public class QueryRunnerTestHelper
     return new QueryRunner<T>()
     {
       @Override
-      public Sequence<T> run(Query<T> query, Map<String, Object> responseContext)
+      public Sequence<T> run(QueryPlus<T> queryPlus, Map<String, Object> responseContext)
       {
-        return qr.run(query, responseContext);
+        return qr.run(queryPlus, responseContext);
       }
 
       @Override
@@ -526,8 +473,9 @@ public class QueryRunnerTestHelper
             new QueryRunner<T>()
             {
               @Override
-              public Sequence<T> run(Query<T> query, Map<String, Object> responseContext)
+              public Sequence<T> run(QueryPlus<T> queryPlus, Map<String, Object> responseContext)
               {
+                Query<T> query = queryPlus.getQuery();
                 List<TimelineObjectHolder> segments = Lists.newArrayList();
                 for (Interval interval : query.getIntervals()) {
                   segments.addAll(timeline.lookup(interval));
@@ -535,7 +483,7 @@ public class QueryRunnerTestHelper
                 List<Sequence<T>> sequences = Lists.newArrayList();
                 for (TimelineObjectHolder<String, Segment> holder : toolChest.filterSegments(query, segments)) {
                   Segment segment = holder.getObject().getChunk(0).getObject();
-                  Query running = query.withQuerySegmentSpec(
+                  QueryPlus queryPlusRunning = queryPlus.withQuerySegmentSpec(
                       new SpecificSegmentSpec(
                           new SegmentDescriptor(
                               holder.getInterval(),
@@ -544,7 +492,7 @@ public class QueryRunnerTestHelper
                           )
                       )
                   );
-                  sequences.add(factory.createRunner(segment).run(running, responseContext));
+                  sequences.add(factory.createRunner(segment).run(queryPlusRunning, responseContext));
                 }
                 return new MergeSequence<>(query.getResultOrdering(), Sequences.simple(sequences));
               }
@@ -568,9 +516,9 @@ public class QueryRunnerTestHelper
         return new QueryRunner<T>()
         {
           @Override
-          public Sequence<T> run(Query<T> query, Map<String, Object> responseContext)
+          public Sequence<T> run(QueryPlus<T> queryPlus, Map<String, Object> responseContext)
           {
-            return delegate.run(query, responseContext);
+            return delegate.run(queryPlus, responseContext);
           }
         };
       }
@@ -595,15 +543,6 @@ public class QueryRunnerTestHelper
     return builder.build();
   }
 
-  public static QueryRunnerFactoryConglomerate newConglomerate()
-  {
-    return new DefaultQueryRunnerFactoryConglomerate(
-        ImmutableMap.<Class<? extends Query>, QueryRunnerFactory>builder()
-            .put(TimeseriesQuery.class, newTimeseriesQueryRunnerFactory())
-            .build()
-    );
-  }
-
   public static TimeseriesQueryRunnerFactory newTimeseriesQueryRunnerFactory()
   {
     return new TimeseriesQueryRunnerFactory(
@@ -611,5 +550,14 @@ public class QueryRunnerTestHelper
         new TimeseriesQueryEngine(),
         QueryRunnerTestHelper.NOOP_QUERYWATCHER
     );
+  }
+
+  public static Map<String, Object> orderedMap(Object... keyValues)
+  {
+    LinkedHashMap<String, Object> map = new LinkedHashMap<>();
+    for (int i = 0; i < keyValues.length; i += 2) {
+      map.put(keyValues[i].toString(), keyValues[i + 1]);
+    }
+    return map;
   }
 }

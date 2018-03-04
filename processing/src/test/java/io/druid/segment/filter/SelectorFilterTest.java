@@ -28,8 +28,10 @@ import io.druid.data.input.impl.InputRowParser;
 import io.druid.data.input.impl.MapInputRowParser;
 import io.druid.data.input.impl.TimeAndDimsParseSpec;
 import io.druid.data.input.impl.TimestampSpec;
+import io.druid.java.util.common.DateTimes;
 import io.druid.java.util.common.Pair;
 import io.druid.query.extraction.MapLookupExtractor;
+import io.druid.query.extraction.TimeDimExtractionFn;
 import io.druid.query.filter.ExtractionDimFilter;
 import io.druid.query.filter.InDimFilter;
 import io.druid.query.filter.SelectorDimFilter;
@@ -37,7 +39,7 @@ import io.druid.query.lookup.LookupExtractionFn;
 import io.druid.query.lookup.LookupExtractor;
 import io.druid.segment.IndexBuilder;
 import io.druid.segment.StorageAdapter;
-import org.joda.time.DateTime;
+import io.druid.segment.incremental.IncrementalIndexSchema;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Test;
@@ -56,9 +58,9 @@ public class SelectorFilterTest extends BaseFilterTest
 
   private static final InputRowParser<Map<String, Object>> PARSER = new MapInputRowParser(
       new TimeAndDimsParseSpec(
-          new TimestampSpec(TIMESTAMP_COLUMN, "iso", new DateTime("2000")),
+          new TimestampSpec(TIMESTAMP_COLUMN, "iso", DateTimes.of("2000")),
           new DimensionsSpec(
-              DimensionsSpec.getDefaultSchemas(ImmutableList.of("dim0", "dim1", "dim2", "dim3")),
+              DimensionsSpec.getDefaultSchemas(ImmutableList.of("dim0", "dim1", "dim2", "dim3", "dim6")),
               null,
               null
           )
@@ -66,12 +68,12 @@ public class SelectorFilterTest extends BaseFilterTest
   );
 
   private static final List<InputRow> ROWS = ImmutableList.of(
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "0", "dim1", "", "dim2", ImmutableList.of("a", "b"))),
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "1", "dim1", "10", "dim2", ImmutableList.of())),
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "2", "dim1", "2", "dim2", ImmutableList.of(""))),
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "3", "dim1", "1", "dim2", ImmutableList.of("a"))),
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "4", "dim1", "def", "dim2", ImmutableList.of("c"))),
-      PARSER.parse(ImmutableMap.<String, Object>of("dim0", "5", "dim1", "abc"))
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "0", "dim1", "", "dim2", ImmutableList.of("a", "b"), "dim6", "2017-07-25")).get(0),
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "1", "dim1", "10", "dim2", ImmutableList.of(), "dim6", "2017-07-25")).get(0),
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "2", "dim1", "2", "dim2", ImmutableList.of(""), "dim6", "2017-05-25")).get(0),
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "3", "dim1", "1", "dim2", ImmutableList.of("a"))).get(0),
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "4", "dim1", "def", "dim2", ImmutableList.of("c"))).get(0),
+      PARSER.parseBatch(ImmutableMap.<String, Object>of("dim0", "5", "dim1", "abc")).get(0)
   );
 
   public SelectorFilterTest(
@@ -82,13 +84,32 @@ public class SelectorFilterTest extends BaseFilterTest
       boolean optimize
   )
   {
-    super(testName, ROWS, indexBuilder, finisher, cnf, optimize);
+    super(
+        testName,
+        ROWS,
+        indexBuilder.schema(
+            new IncrementalIndexSchema.Builder()
+                .withDimensionsSpec(PARSER.getParseSpec().getDimensionsSpec()).build()
+        ),
+        finisher,
+        cnf,
+        optimize
+    );
   }
 
   @AfterClass
   public static void tearDown() throws Exception
   {
     BaseFilterTest.tearDown(SelectorFilterTest.class.getName());
+  }
+
+  @Test
+  public void testWithTimeExtractionFnNull()
+  {
+    assertFilterMatches(new SelectorDimFilter("dim0", null, new TimeDimExtractionFn("yyyy-MM-dd", "yyyy-MM", true)), ImmutableList.of());
+    assertFilterMatches(new SelectorDimFilter("dim6", null, new TimeDimExtractionFn("yyyy-MM-dd", "yyyy-MM", true)), ImmutableList.of("3", "4", "5"));
+    assertFilterMatches(new SelectorDimFilter("dim6", "2017-07", new TimeDimExtractionFn("yyyy-MM-dd", "yyyy-MM", true)), ImmutableList.of("0", "1"));
+    assertFilterMatches(new SelectorDimFilter("dim6", "2017-05", new TimeDimExtractionFn("yyyy-MM-dd", "yyyy-MM", true)), ImmutableList.of("2"));
   }
 
   @Test

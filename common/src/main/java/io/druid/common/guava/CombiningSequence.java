@@ -92,23 +92,22 @@ public class CombiningSequence<T> implements Sequence<T>
     final OutType retVal;
     final boolean finalFinalValue;
 
-    if(!yielder.isDone()) {
+    if (!yielder.isDone()) {
       retVal = combiningAccumulator.getRetVal();
       finalYielder = null;
       finalFinalValue = false;
     } else {
-      if(!finalValue && combiningAccumulator.accumulatedSomething()) {
+      if (!finalValue && combiningAccumulator.accumulatedSomething()) {
         combiningAccumulator.accumulateLastValue();
         retVal = combiningAccumulator.getRetVal();
         finalFinalValue = true;
 
-        if(!combiningAccumulator.yielded()) {
+        if (!combiningAccumulator.yielded()) {
           return Yielders.done(retVal, yielder);
         } else {
           finalYielder = Yielders.done(null, yielder);
         }
-      }
-      else {
+      } else {
         return Yielders.done(combiningAccumulator.getRetVal(), yielder);
       }
     }
@@ -178,21 +177,19 @@ public class CombiningSequence<T> implements Sequence<T>
       this.retVal = retVal;
     }
 
-    public YieldingAccumulator<OutType, T> getAccumulator()
-    {
-      return accumulator;
-    }
-
+    @Override
     public void reset()
     {
       accumulator.reset();
     }
 
+    @Override
     public boolean yielded()
     {
       return accumulator.yielded();
     }
 
+    @Override
     public void yield()
     {
       accumulator.yield();

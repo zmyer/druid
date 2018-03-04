@@ -21,7 +21,6 @@ package io.druid.data.input.impl;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-
 import io.druid.java.util.common.parsers.Parser;
 
 import java.util.List;
@@ -43,12 +42,13 @@ public class TimeAndDimsParseSpec extends ParseSpec
     );
   }
 
+  @Override
   public Parser<String, Object> makeParser()
   {
     return new Parser<String, Object>()
     {
       @Override
-      public Map<String, Object> parse(String input)
+      public Map<String, Object> parseToMap(String input)
       {
         throw new UnsupportedOperationException("not supported");
       }
@@ -67,11 +67,13 @@ public class TimeAndDimsParseSpec extends ParseSpec
     };
   }
 
+  @Override
   public ParseSpec withTimestampSpec(TimestampSpec spec)
   {
     return new TimeAndDimsParseSpec(spec, getDimensionsSpec());
   }
 
+  @Override
   public ParseSpec withDimensionsSpec(DimensionsSpec spec)
   {
     return new TimeAndDimsParseSpec(getTimestampSpec(), spec);

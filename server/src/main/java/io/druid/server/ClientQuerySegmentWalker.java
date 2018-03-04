@@ -22,7 +22,7 @@ package io.druid.server;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.inject.Inject;
-import com.metamx.emitter.service.ServiceEmitter;
+import io.druid.java.util.emitter.service.ServiceEmitter;
 import io.druid.client.CachingClusteredClient;
 import io.druid.query.FluentQueryRunnerBuilder;
 import io.druid.query.PostProcessingOperator;
@@ -34,6 +34,7 @@ import io.druid.query.QueryToolChestWarehouse;
 import io.druid.query.RetryQueryRunner;
 import io.druid.query.RetryQueryRunnerConfig;
 import io.druid.query.SegmentDescriptor;
+import io.druid.server.initialization.ServerConfig;
 import org.joda.time.Interval;
 
 /**
@@ -45,6 +46,7 @@ public class ClientQuerySegmentWalker implements QuerySegmentWalker
   private final QueryToolChestWarehouse warehouse;
   private final RetryQueryRunnerConfig retryConfig;
   private final ObjectMapper objectMapper;
+  private final ServerConfig serverConfig;
 
   @Inject
   public ClientQuerySegmentWalker(
@@ -52,7 +54,8 @@ public class ClientQuerySegmentWalker implements QuerySegmentWalker
       CachingClusteredClient baseClient,
       QueryToolChestWarehouse warehouse,
       RetryQueryRunnerConfig retryConfig,
-      ObjectMapper objectMapper
+      ObjectMapper objectMapper,
+      ServerConfig serverConfig
   )
   {
     this.emitter = emitter;
@@ -60,21 +63,22 @@ public class ClientQuerySegmentWalker implements QuerySegmentWalker
     this.warehouse = warehouse;
     this.retryConfig = retryConfig;
     this.objectMapper = objectMapper;
+    this.serverConfig = serverConfig;
   }
 
   @Override
   public <T> QueryRunner<T> getQueryRunnerForIntervals(Query<T> query, Iterable<Interval> intervals)
   {
-    return makeRunner(query);
+    return makeRunner(query, baseClient.getQueryRunnerForIntervals(query, intervals));
   }
 
   @Override
   public <T> QueryRunner<T> getQueryRunnerForSegments(Query<T> query, Iterable<SegmentDescriptor> specs)
   {
-    return makeRunner(query);
+    return makeRunner(query, baseClient.getQueryRunnerForSegments(query, specs));
   }
 
-  private <T> QueryRunner<T> makeRunner(Query<T> query)
+  private <T> QueryRunner<T> makeRunner(Query<T> query, QueryRunner<T> baseClientRunner)
   {
     QueryToolChest<T, Query<T>> toolChest = warehouse.getToolChest(query);
     PostProcessingOperator<T> postProcessing = objectMapper.convertValue(
@@ -86,11 +90,13 @@ public class ClientQuerySegmentWalker implements QuerySegmentWalker
 
     return new FluentQueryRunnerBuilder<>(toolChest)
         .create(
-            new RetryQueryRunner<>(
-                baseClient,
-                toolChest,
-                retryConfig,
-                objectMapper
+            new SetAndVerifyContextQueryRunner(
+                serverConfig,
+                new RetryQueryRunner<>(
+                    baseClientRunner,
+                    retryConfig,
+                    objectMapper
+                )
             )
         )
         .applyPreMergeDecoration()

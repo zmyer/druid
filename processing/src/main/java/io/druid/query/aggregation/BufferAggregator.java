@@ -19,6 +19,7 @@
 
 package io.druid.query.aggregation;
 
+import io.druid.guice.annotations.ExtensionPoint;
 import io.druid.query.monomorphicprocessing.CalledFromHotLoop;
 import io.druid.query.monomorphicprocessing.HotLoopCallee;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
@@ -33,6 +34,7 @@ import java.nio.ByteBuffer;
  * Thus, an Aggregator can be thought of as a closure over some other thing that is stateful and changes between calls
  * to aggregate(...).
  */
+@ExtensionPoint
 public interface BufferAggregator extends HotLoopCallee
 {
   /**
@@ -113,6 +115,30 @@ public interface BufferAggregator extends HotLoopCallee
   long getLong(ByteBuffer buf, int position);
 
   /**
+   * Returns the double representation of the given aggregate byte array
+   *
+   * Converts the given byte buffer representation into the intermediate aggregate value.
+   *
+   * <b>Implementations must not change the position, limit or mark of the given buffer</b>
+   *
+   * Implementations are only required to support this method if they are aggregations which
+   * have an {@link AggregatorFactory#getTypeName()} of "double".
+   * If unimplemented, throwing an {@link UnsupportedOperationException} is common and recommended.
+   *
+   * The default implementation casts {@link BufferAggregator#getFloat(ByteBuffer, int)} to double.
+   * This default method is added to enable smooth backward compatibility, please re-implement it if your aggregators
+   * work with numeric double columns.
+   *
+   * @param buf byte buffer storing the byte array representation of the aggregate
+   * @param position offset within the byte buffer at which the aggregate value is stored
+   * @return the double representation of the aggregate
+   */
+  default double getDouble(ByteBuffer buf, int position)
+  {
+    return (double) getFloat(buf, position);
+  }
+
+  /**
    * Release any resources used by the aggregator
    */
   void close();
@@ -123,11 +149,13 @@ public interface BufferAggregator extends HotLoopCallee
    * <p>The default implementation inspects nothing. Classes that implement {@code BufferAggregator} are encouraged to
    * override this method, following the specification of {@link HotLoopCallee#inspectRuntimeShape}.
    */
+  @Override
   default void inspectRuntimeShape(RuntimeShapeInspector inspector)
   {
+    // nothing to inspect
   }
 
-  /*
+  /**
    * Relocates any cached objects.
    * If underlying ByteBuffer used for aggregation buffer relocates to a new ByteBuffer, positional caches(if any)
    * built on top of old ByteBuffer can not be used for further {@link BufferAggregator#aggregate(ByteBuffer, int)}
@@ -148,6 +176,24 @@ public interface BufferAggregator extends HotLoopCallee
    */
   default void relocate(int oldPosition, int newPosition, ByteBuffer oldBuffer, ByteBuffer newBuffer)
   {
+  }
+
+  /**
+   * returns true if aggregator's output type is primitive long/double/float and aggregated value is null,
+   * but when aggregated output type is Object, this method always returns false,
+   * and users are advised to check nullability for the object returned by {@link BufferAggregator#get(ByteBuffer, int)}
+   * method.
+   * The default implementation always return false to enable smooth backward compatibility,
+   * re-implement if your aggregator is nullable.
+   *
+   * @param buf      byte buffer storing the byte array representation of the aggregate
+   * @param position offset within the byte buffer at which the aggregate value is stored
+   *
+   * @return true if the aggregated value is primitive long/double/float and aggregated value is null otherwise false.
+   */
+  default boolean isNull(ByteBuffer buf, int position)
+  {
+    return false;
   }
 
 }

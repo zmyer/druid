@@ -109,13 +109,6 @@ If `type` is not included, the parser defaults to `string`. For additional data 
 | type | String | This should say `string` in general, or `hadoopyString` when used in a Hadoop indexing job. | no |
 | parseSpec | JSON Object | Specifies the format, timestamp, and dimensions of the data. | yes |
 
-### Protobuf Parser
-
-| Field | Type | Description | Required |
-|-------|------|-------------|----------|
-| type | String | This should say `protobuf`. | no |
-| parseSpec | JSON Object | Specifies the timestamp and dimensions of the data. Should be a timeAndDims parseSpec. | yes |
-
 ### ParseSpec
 
 ParseSpecs serve two purposes:
@@ -137,6 +130,10 @@ Use this with the String Parser to load JSON.
 | flattenSpec | JSON Object | Specifies flattening configuration for nested JSON data. See [Flattening JSON](./flatten-json.html) for more info. | no |
 
 #### JSON Lowercase ParseSpec
+
+<div class="note caution">
+The _jsonLowercase_ parser is deprecated and may be removed in a future version of Druid.
+</div>
 
 This is a special variation of the JSON ParseSpec that lower cases all the column names in the incoming JSON data. This parseSpec is required if you are updating to Druid 0.7.x from Druid 0.6.x, are directly ingesting JSON with mixed case column names, do not have any ETL in place to lower case those column names, and would like to make queries that include the data you created using 0.6.x and 0.7.x.
 
@@ -201,7 +198,13 @@ handle all formatting decisions on their own, without using the ParseSpec.
 #### Dimension Schema
 A dimension schema specifies the type and name of a dimension to be ingested.
 
-For example, the following `dimensionsSpec` section from a `dataSchema` ingests one column as Long (`countryNum`), two columns as Float (`userLatitude`, `userLongitude`), and the other columns as Strings:
+For string columns, the dimension schema can also be used to enable or disable bitmap indexing by setting the
+`createBitmapIndex` boolean. By default, bitmap indexes are enabled for all string columns. Only string columns can have
+bitmap indexes; they are not supported for numeric columns.
+
+For example, the following `dimensionsSpec` section from a `dataSchema` ingests one column as Long (`countryNum`), two
+columns as Float (`userLatitude`, `userLongitude`), and the other columns as Strings, with bitmap indexes disabled
+for the `comment` column.
 
 ```json
 "dimensionsSpec" : {
@@ -219,6 +222,11 @@ For example, the following `dimensionsSpec` section from a `dataSchema` ingests 
     "region",
     "city",
     {
+      "type": "string",
+      "name": "comment",
+      "createBitmapIndex": false
+    },
+    {
       "type": "long",
       "name": "countryNum"
     },
@@ -235,7 +243,6 @@ For example, the following `dimensionsSpec` section from a `dataSchema` ingests 
   "spatialDimensions" : []
 }
 ```
-
 
 ## GranularitySpec
 

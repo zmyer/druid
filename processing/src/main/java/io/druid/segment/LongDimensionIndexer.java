@@ -21,37 +21,33 @@ package io.druid.segment;
 
 import io.druid.collections.bitmap.BitmapFactory;
 import io.druid.collections.bitmap.MutableBitmap;
+import io.druid.common.config.NullHandling;
+import io.druid.java.util.common.guava.Comparators;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
-import io.druid.segment.column.ValueType;
 import io.druid.segment.data.Indexed;
 import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
+import io.druid.segment.incremental.TimeAndDimsHolder;
 
+import javax.annotation.Nullable;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 public class LongDimensionIndexer implements DimensionIndexer<Long, Long, Long>
 {
-  @Override
-  public ValueType getValueType()
-  {
-    return ValueType.LONG;
-  }
+  public static final Comparator LONG_COMPARATOR = Comparators.<Long>naturalNullsFirst();
 
   @Override
-  public Long processRowValsToUnsortedEncodedKeyComponent(Object dimValues)
+  public Long processRowValsToUnsortedEncodedKeyComponent(Object dimValues, boolean reportParseExceptions)
   {
     if (dimValues instanceof List) {
       throw new UnsupportedOperationException("Numeric columns do not support multivalue rows.");
     }
 
-    return DimensionHandlerUtils.convertObjectToLong(dimValues);
-  }
-
-  @Override
-  public Long getSortedEncodedValueFromUnsorted(Long unsortedIntermediateValue)
-  {
-    return unsortedIntermediateValue;
+    Long ret = DimensionHandlerUtils.convertObjectToLong(dimValues, reportParseExceptions);
+    // remove null -> zero conversion when https://github.com/druid-io/druid/pull/5278 series of patches is merged
+    return ret == null ? DimensionHandlerUtils.ZERO_LONG : ret;
   }
 
   @Override
@@ -86,31 +82,53 @@ public class LongDimensionIndexer implements DimensionIndexer<Long, Long, Long>
 
   @Override
   public DimensionSelector makeDimensionSelector(
-      DimensionSpec spec, IncrementalIndexStorageAdapter.EntryHolder currEntry, IncrementalIndex.DimensionDesc desc
+      DimensionSpec spec,
+      TimeAndDimsHolder currEntry,
+      IncrementalIndex.DimensionDesc desc
   )
   {
-    return new LongWrappingDimensionSelector(
-        makeLongColumnSelector(currEntry, desc),
-        spec.getExtractionFn()
-    );
+    return new LongWrappingDimensionSelector(makeColumnValueSelector(currEntry, desc), spec.getExtractionFn());
   }
 
   @Override
-  public LongColumnSelector makeLongColumnSelector(
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
+  public ColumnValueSelector<?> makeColumnValueSelector(
+      TimeAndDimsHolder currEntry,
+      IncrementalIndex.DimensionDesc desc
   )
   {
     final int dimIndex = desc.getIndex();
     class IndexerLongColumnSelector implements LongColumnSelector
     {
+
       @Override
-      public long get()
+      public boolean isNull()
       {
-        final Object[] dims = currEntry.getKey().getDims();
+        final Object[] dims = currEntry.get().getDims();
+        return dimIndex >= dims.length || dims[dimIndex] == null;
+      }
+
+      @Override
+      public long getLong()
+      {
+        final Object[] dims = currEntry.get().getDims();
+
+        if (dimIndex >= dims.length || dims[dimIndex] == null) {
+          assert NullHandling.replaceWithDefault();
+          return 0;
+        }
+
+        return (Long) dims[dimIndex];
+      }
+
+      @SuppressWarnings("deprecation")
+      @Nullable
+      @Override
+      public Long getObject()
+      {
+        final Object[] dims = currEntry.get().getDims();
 
         if (dimIndex >= dims.length) {
-          return 0L;
+          return null;
         }
 
         return (Long) dims[dimIndex];
@@ -119,6 +137,7 @@ public class LongDimensionIndexer implements DimensionIndexer<Long, Long, Long>
       @Override
       public void inspectRuntimeShape(RuntimeShapeInspector inspector)
       {
+        // nothing to inspect
       }
     }
 
@@ -126,84 +145,21 @@ public class LongDimensionIndexer implements DimensionIndexer<Long, Long, Long>
   }
 
   @Override
-  public FloatColumnSelector makeFloatColumnSelector(
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
-  )
+  public int compareUnsortedEncodedKeyComponents(@Nullable Long lhs, @Nullable Long rhs)
   {
-    final int dimIndex = desc.getIndex();
-    class IndexerFloatColumnSelector implements FloatColumnSelector
-    {
-      @Override
-      public float get()
-      {
-        final Object[] dims = currEntry.getKey().getDims();
-
-        if (dimIndex >= dims.length) {
-          return 0.0f;
-        }
-
-        long longVal = (Long) dims[dimIndex];
-        return (float) longVal;
-      }
-
-      @Override
-      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-      {
-      }
-    }
-
-    return new IndexerFloatColumnSelector();
+    return LONG_COMPARATOR.compare(lhs, rhs);
   }
 
   @Override
-  public ObjectColumnSelector makeObjectColumnSelector(
-      final DimensionSpec spec,
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
-  )
+  public boolean checkUnsortedEncodedKeyComponentsEqual(@Nullable Long lhs, @Nullable Long rhs)
   {
-    final int dimIndex = desc.getIndex();
-    class IndexerObjectColumnSelector implements ObjectColumnSelector
-    {
-      @Override
-      public Class classOfObject()
-      {
-        return Long.class;
-      }
-
-      @Override
-      public Object get()
-      {
-        final Object[] dims = currEntry.getKey().getDims();
-
-        if (dimIndex >= dims.length) {
-          return 0L;
-        }
-
-        return dims[dimIndex];
-      }
-    }
-
-    return new IndexerObjectColumnSelector();
+    return Objects.equals(lhs, rhs);
   }
 
   @Override
-  public int compareUnsortedEncodedKeyComponents(Long lhs, Long rhs)
+  public int getUnsortedEncodedKeyComponentHashCode(@Nullable Long key)
   {
-    return lhs.compareTo(rhs);
-  }
-
-  @Override
-  public boolean checkUnsortedEncodedKeyComponentsEqual(Long lhs, Long rhs)
-  {
-    return lhs.equals(rhs);
-  }
-
-  @Override
-  public int getUnsortedEncodedKeyComponentHashCode(Long key)
-  {
-    return key.hashCode();
+    return DimensionHandlerUtils.nullToZero(key).hashCode();
   }
 
   @Override

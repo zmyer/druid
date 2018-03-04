@@ -23,18 +23,18 @@ import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-import com.metamx.emitter.service.ServiceEmitter;
-import com.metamx.emitter.service.ServiceEventBuilder;
-import com.metamx.emitter.service.ServiceMetricEvent;
+import io.druid.java.util.emitter.service.ServiceEmitter;
+import io.druid.java.util.emitter.service.ServiceEventBuilder;
+import io.druid.java.util.emitter.service.ServiceMetricEvent;
 import io.druid.client.DruidServerConfig;
-import io.druid.server.coordination.ServerManager;
-import io.druid.server.coordination.ZkCoordinator;
+import io.druid.java.util.common.Intervals;
+import io.druid.server.SegmentManager;
+import io.druid.server.coordination.SegmentLoadDropHandler;
 import io.druid.timeline.DataSegment;
 import org.easymock.Capture;
 import org.easymock.CaptureType;
 import org.easymock.EasyMock;
 import org.easymock.EasyMockSupport;
-import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -47,16 +47,16 @@ import java.util.Map;
 public class HistoricalMetricsMonitorTest extends EasyMockSupport
 {
   private DruidServerConfig druidServerConfig;
-  private ServerManager serverManager;
-  private ZkCoordinator zkCoordinator;
+  private SegmentManager segmentManager;
+  private SegmentLoadDropHandler segmentLoadDropMgr;
   private ServiceEmitter serviceEmitter;
 
   @Before
   public void setUp()
   {
     druidServerConfig = EasyMock.createStrictMock(DruidServerConfig.class);
-    serverManager = EasyMock.createStrictMock(ServerManager.class);
-    zkCoordinator = EasyMock.createStrictMock(ZkCoordinator.class);
+    segmentManager = EasyMock.createStrictMock(SegmentManager.class);
+    segmentLoadDropMgr = EasyMock.createStrictMock(SegmentLoadDropHandler.class);
     serviceEmitter = EasyMock.createStrictMock(ServiceEmitter.class);
   }
 
@@ -67,7 +67,7 @@ public class HistoricalMetricsMonitorTest extends EasyMockSupport
     final String dataSource = "dataSource";
     final DataSegment dataSegment = new DataSegment(
         dataSource,
-        Interval.parse("2014/2015"),
+        Intervals.of("2014/2015"),
         "version",
         ImmutableMap.<String, Object>of(),
         ImmutableList.<String>of(),
@@ -81,30 +81,30 @@ public class HistoricalMetricsMonitorTest extends EasyMockSupport
     final String tier = "tier";
 
     EasyMock.expect(druidServerConfig.getMaxSize()).andReturn(maxSize).once();
-    EasyMock.expect(zkCoordinator.getPendingDeleteSnapshot()).andReturn(ImmutableList.of(dataSegment)).once();
+    EasyMock.expect(segmentLoadDropMgr.getPendingDeleteSnapshot()).andReturn(ImmutableList.of(dataSegment)).once();
     EasyMock.expect(druidServerConfig.getTier()).andReturn(tier).once();
     EasyMock.expect(druidServerConfig.getPriority()).andReturn(priority).once();
-    EasyMock.expect(serverManager.getDataSourceSizes()).andReturn(ImmutableMap.of(dataSource, size));
+    EasyMock.expect(segmentManager.getDataSourceSizes()).andReturn(ImmutableMap.of(dataSource, size));
     EasyMock.expect(druidServerConfig.getTier()).andReturn(tier).once();
     EasyMock.expect(druidServerConfig.getPriority()).andReturn(priority).once();
     EasyMock.expect(druidServerConfig.getMaxSize()).andReturn(maxSize).times(2);
-    EasyMock.expect(serverManager.getDataSourceCounts()).andReturn(ImmutableMap.of(dataSource, 1L));
+    EasyMock.expect(segmentManager.getDataSourceCounts()).andReturn(ImmutableMap.of(dataSource, 1L));
     EasyMock.expect(druidServerConfig.getTier()).andReturn(tier).once();
     EasyMock.expect(druidServerConfig.getPriority()).andReturn(priority).once();
 
     final HistoricalMetricsMonitor monitor = new HistoricalMetricsMonitor(
         druidServerConfig,
-        serverManager,
-        zkCoordinator
+        segmentManager,
+        segmentLoadDropMgr
     );
 
     final Capture<ServiceEventBuilder<ServiceMetricEvent>> eventCapture = EasyMock.newCapture(CaptureType.ALL);
     serviceEmitter.emit(EasyMock.capture(eventCapture));
     EasyMock.expectLastCall().times(5);
 
-    EasyMock.replay(druidServerConfig, serverManager, zkCoordinator, serviceEmitter);
+    EasyMock.replay(druidServerConfig, segmentManager, segmentLoadDropMgr, serviceEmitter);
     monitor.doMonitor(serviceEmitter);
-    EasyMock.verify(druidServerConfig, serverManager, zkCoordinator, serviceEmitter);
+    EasyMock.verify(druidServerConfig, segmentManager, segmentLoadDropMgr, serviceEmitter);
 
     final String host = "host";
     final String service = "service";
@@ -119,7 +119,7 @@ public class HistoricalMetricsMonitorTest extends EasyMockSupport
               @Nullable ServiceEventBuilder<ServiceMetricEvent> input
           )
           {
-            final HashMap<String, Object> map = new HashMap<>(input.build(host, service).toMap());
+            final HashMap<String, Object> map = new HashMap<>(input.build(service, host).toMap());
             Assert.assertNotNull(map.remove("feed"));
             Assert.assertNotNull(map.remove("timestamp"));
             Assert.assertNotNull(map.remove("service"));

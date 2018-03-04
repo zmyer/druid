@@ -23,15 +23,17 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import com.google.common.primitives.Longs;
-import com.metamx.common.StringUtils;
+import io.druid.java.util.common.StringUtils;
 import io.druid.collections.SerializablePair;
+import io.druid.java.util.common.UOE;
+import io.druid.query.aggregation.AggregateCombiner;
 import io.druid.query.aggregation.Aggregator;
 import io.druid.query.aggregation.AggregatorFactory;
-import io.druid.query.aggregation.AggregatorFactoryNotMergeableException;
+import io.druid.query.aggregation.AggregatorUtil;
 import io.druid.query.aggregation.BufferAggregator;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
+import io.druid.segment.BaseObjectColumnValueSelector;
 import io.druid.segment.ColumnSelectorFactory;
-import io.druid.segment.ObjectColumnSelector;
 import io.druid.segment.column.Column;
 
 import java.nio.ByteBuffer;
@@ -42,16 +44,10 @@ import java.util.Map;
 
 public class LongFirstAggregatorFactory extends AggregatorFactory
 {
-  public static final Comparator VALUE_COMPARATOR = new Comparator()
-  {
-    @Override
-    public int compare(Object o1, Object o2)
-    {
-      return Longs.compare(((SerializablePair<Long, Long>) o1).rhs, ((SerializablePair<Long, Long>) o2).rhs);
-    }
-  };
-
-  private static final byte CACHE_TYPE_ID = 17;
+  public static final Comparator VALUE_COMPARATOR = (o1, o2) -> Longs.compare(
+      ((SerializablePair<Long, Long>) o1).rhs,
+      ((SerializablePair<Long, Long>) o2).rhs
+  );
 
   private final String fieldName;
   private final String name;
@@ -73,9 +69,8 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
   public Aggregator factorize(ColumnSelectorFactory metricFactory)
   {
     return new LongFirstAggregator(
-        name,
-        metricFactory.makeLongColumnSelector(Column.TIME_COLUMN_NAME),
-        metricFactory.makeLongColumnSelector(fieldName)
+        metricFactory.makeColumnValueSelector(Column.TIME_COLUMN_NAME),
+        metricFactory.makeColumnValueSelector(fieldName)
     );
   }
 
@@ -83,8 +78,8 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
   public BufferAggregator factorizeBuffered(ColumnSelectorFactory metricFactory)
   {
     return new LongFirstBufferAggregator(
-        metricFactory.makeLongColumnSelector(Column.TIME_COLUMN_NAME),
-        metricFactory.makeLongColumnSelector(fieldName)
+        metricFactory.makeColumnValueSelector(Column.TIME_COLUMN_NAME),
+        metricFactory.makeColumnValueSelector(fieldName)
     );
   }
 
@@ -101,6 +96,12 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
   }
 
   @Override
+  public AggregateCombiner makeAggregateCombiner()
+  {
+    throw new UOE("LongFirstAggregatorFactory is not supported during ingestion for rollup");
+  }
+
+  @Override
   public AggregatorFactory getCombiningFactory()
   {
     return new LongFirstAggregatorFactory(name, name)
@@ -108,13 +109,13 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
       @Override
       public Aggregator factorize(ColumnSelectorFactory metricFactory)
       {
-        final ObjectColumnSelector selector = metricFactory.makeObjectColumnSelector(name);
-        return new LongFirstAggregator(name, null, null)
+        final BaseObjectColumnValueSelector selector = metricFactory.makeColumnValueSelector(name);
+        return new LongFirstAggregator(null, null)
         {
           @Override
           public void aggregate()
           {
-            SerializablePair<Long, Long> pair = (SerializablePair<Long, Long>) selector.get();
+            SerializablePair<Long, Long> pair = (SerializablePair<Long, Long>) selector.getObject();
             if (pair.lhs < firstTime) {
               firstTime = pair.lhs;
               firstValue = pair.rhs;
@@ -126,17 +127,17 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
       @Override
       public BufferAggregator factorizeBuffered(ColumnSelectorFactory metricFactory)
       {
-        final ObjectColumnSelector selector = metricFactory.makeObjectColumnSelector(name);
+        final BaseObjectColumnValueSelector selector = metricFactory.makeColumnValueSelector(name);
         return new LongFirstBufferAggregator(null, null)
         {
           @Override
           public void aggregate(ByteBuffer buf, int position)
           {
-            SerializablePair<Long, Long> pair = (SerializablePair<Long, Long>) selector.get();
+            SerializablePair<Long, Long> pair = (SerializablePair<Long, Long>) selector.getObject();
             long firstTime = buf.getLong(position);
             if (pair.lhs < firstTime) {
               buf.putLong(position, pair.lhs);
-              buf.putLong(position + Longs.BYTES, pair.rhs);
+              buf.putLong(position + Long.BYTES, pair.rhs);
             }
           }
 
@@ -148,16 +149,6 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
         };
       }
     };
-  }
-
-  @Override
-  public AggregatorFactory getMergingFactory(AggregatorFactory other) throws AggregatorFactoryNotMergeableException
-  {
-    if (other.getName().equals(this.getName()) && this.getClass() == other.getClass()) {
-      return getCombiningFactory();
-    } else {
-      throw new AggregatorFactoryNotMergeableException(this, other);
-    }
   }
 
   @Override
@@ -203,10 +194,9 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
   {
     byte[] fieldNameBytes = StringUtils.toUtf8(fieldName);
 
-    return ByteBuffer.allocate(2 + fieldNameBytes.length)
-                     .put(CACHE_TYPE_ID)
+    return ByteBuffer.allocate(1 + fieldNameBytes.length)
+                     .put(AggregatorUtil.LONG_FIRST_CACHE_TYPE_ID)
                      .put(fieldNameBytes)
-                     .put((byte)0xff)
                      .array();
   }
 
@@ -219,7 +209,7 @@ public class LongFirstAggregatorFactory extends AggregatorFactory
   @Override
   public int getMaxIntermediateSize()
   {
-    return Longs.BYTES * 2;
+    return Long.BYTES * 2;
   }
 
   @Override

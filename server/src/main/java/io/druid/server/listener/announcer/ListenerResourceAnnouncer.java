@@ -20,27 +20,24 @@
 package io.druid.server.listener.announcer;
 
 import com.google.common.base.Throwables;
-import com.google.common.net.HostAndPort;
-import com.google.common.primitives.Longs;
-
 import io.druid.curator.announcement.Announcer;
 import io.druid.java.util.common.lifecycle.LifecycleStart;
 import io.druid.java.util.common.lifecycle.LifecycleStop;
 import io.druid.java.util.common.logger.Logger;
-
+import io.druid.server.http.HostAndPortWithScheme;
 import org.apache.curator.utils.ZKPaths;
-import org.joda.time.DateTime;
 
 import java.nio.ByteBuffer;
 
 /**
- * Announces that there is a particular ListenerResource at the listener_key.
+ * Starting 0.11.0 Coordinator uses announcements made by {@link io.druid.discovery.DruidNodeAnnouncer} .
  */
+@Deprecated
 public abstract class ListenerResourceAnnouncer
 {
   private static final byte[] ANNOUNCE_BYTES = ByteBuffer
-      .allocate(Longs.BYTES)
-      .putLong(DateTime.now().getMillis())
+      .allocate(Long.BYTES)
+      .putLong(System.currentTimeMillis())
       .array();
   private static final Logger LOG = new Logger(ListenerResourceAnnouncer.class);
   private final Object startStopSync = new Object();
@@ -52,7 +49,7 @@ public abstract class ListenerResourceAnnouncer
       Announcer announcer,
       ListeningAnnouncerConfig listeningAnnouncerConfig,
       String listener_key,
-      HostAndPort node
+      HostAndPortWithScheme node
   )
   {
     this(
@@ -65,7 +62,7 @@ public abstract class ListenerResourceAnnouncer
   ListenerResourceAnnouncer(
       Announcer announcer,
       String announceBasePath,
-      HostAndPort node
+      HostAndPortWithScheme node
   )
   {
     this.announcePath = ZKPaths.makePath(announceBasePath, node.toString());

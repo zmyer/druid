@@ -25,21 +25,24 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import io.druid.collections.StupidPool;
 import io.druid.data.input.MapBasedInputRow;
-import io.druid.data.input.Row;
 import io.druid.data.input.impl.DimensionSchema;
 import io.druid.data.input.impl.DimensionsSpec;
+import io.druid.data.input.impl.DoubleDimensionSchema;
+import io.druid.data.input.impl.FloatDimensionSchema;
+import io.druid.data.input.impl.LongDimensionSchema;
 import io.druid.data.input.impl.StringDimensionSchema;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.granularity.Granularities;
+import io.druid.java.util.common.parsers.ParseException;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.aggregation.FilteredAggregatorFactory;
 import io.druid.query.filter.SelectorDimFilter;
 import io.druid.segment.CloserRule;
-import org.joda.time.DateTime;
 import org.junit.Assert;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
@@ -61,6 +64,9 @@ public class IncrementalIndexTest
   }
 
   @Rule
+  public ExpectedException expectedException = ExpectedException.none();
+
+  @Rule
   public final CloserRule closer = new CloserRule(false);
 
   private final IndexCreator indexCreator;
@@ -76,8 +82,9 @@ public class IncrementalIndexTest
     DimensionsSpec dimensions = new DimensionsSpec(
         Arrays.<DimensionSchema>asList(
             new StringDimensionSchema("string"),
-            new StringDimensionSchema("float"),
-            new StringDimensionSchema("long")
+            new FloatDimensionSchema("float"),
+            new LongDimensionSchema("long"),
+            new DoubleDimensionSchema("double")
         ), null, null
     );
     AggregatorFactory[] metrics = {
@@ -87,11 +94,9 @@ public class IncrementalIndexTest
         )
     };
     final IncrementalIndexSchema schema = new IncrementalIndexSchema.Builder()
-        .withMinTimestamp(0)
         .withQueryGranularity(Granularities.MINUTE)
         .withDimensionsSpec(dimensions)
         .withMetrics(metrics)
-        .withRollup(true)
         .build();
 
     final List<Object[]> constructors = Lists.newArrayList();
@@ -103,7 +108,12 @@ public class IncrementalIndexTest
                 @Override
                 public IncrementalIndex createIndex()
                 {
-                  return new OnheapIncrementalIndex(schema, false, true, sortFacts, 1000);
+                  return new IncrementalIndex.Builder()
+                      .setIndexSchema(schema)
+                      .setDeserializeComplexMetrics(false)
+                      .setSortFacts(sortFacts)
+                      .setMaxRowCount(1000)
+                      .buildOnheap();
                 }
               }
           }
@@ -115,24 +125,23 @@ public class IncrementalIndexTest
                 @Override
                 public IncrementalIndex createIndex()
                 {
-                  return new OffheapIncrementalIndex(
-                      schema,
-                      true,
-                      true,
-                      sortFacts,
-                      1000000,
-                      new StupidPool<ByteBuffer>(
-                          "OffheapIncrementalIndex-bufferPool",
-                          new Supplier<ByteBuffer>()
-                          {
-                            @Override
-                            public ByteBuffer get()
-                            {
-                              return ByteBuffer.allocate(256 * 1024);
-                            }
-                          }
-                      )
-                  );
+                  return new IncrementalIndex.Builder()
+                      .setIndexSchema(schema)
+                      .setSortFacts(sortFacts)
+                      .setMaxRowCount(1000000)
+                      .buildOffheap(
+                          new StupidPool<ByteBuffer>(
+                              "OffheapIncrementalIndex-bufferPool",
+                              new Supplier<ByteBuffer>()
+                              {
+                                @Override
+                                public ByteBuffer get()
+                                {
+                                  return ByteBuffer.allocate(256 * 1024);
+                                }
+                              }
+                          )
+                      );
                 }
               }
           }
@@ -148,14 +157,14 @@ public class IncrementalIndexTest
     IncrementalIndex index = closer.closeLater(indexCreator.createIndex());
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe"),
             ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
         )
     );
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe", "joe"),
             ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
         )
@@ -168,7 +177,7 @@ public class IncrementalIndexTest
     IncrementalIndex index = closer.closeLater(indexCreator.createIndex());
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe", "joe"),
             ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
         )
@@ -181,21 +190,21 @@ public class IncrementalIndexTest
     IncrementalIndex index = closer.closeLater(indexCreator.createIndex());
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe"),
             ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
         )
     );
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe"),
             ImmutableMap.<String, Object>of("billy", "C", "joe", "B")
         )
     );
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
+            System.currentTimeMillis() - 1,
             Lists.newArrayList("billy", "joe"),
             ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
         )
@@ -203,33 +212,61 @@ public class IncrementalIndexTest
   }
 
   @Test
-  public void testNullDimensionTransform() throws IndexSizeExceededException
+  public void testUnparseableNumerics() throws IndexSizeExceededException
   {
     IncrementalIndex<?> index = closer.closeLater(indexCreator.createIndex());
+
+    expectedException.expect(ParseException.class);
+    expectedException.expectMessage("could not convert value [asdj] to long");
     index.add(
         new MapBasedInputRow(
-            new DateTime().minus(1).getMillis(),
-            Lists.newArrayList("string", "float", "long"),
+            System.currentTimeMillis() - 1,
+            Lists.newArrayList("string", "float", "long", "double"),
             ImmutableMap.<String, Object>of(
-                "string", Arrays.asList("A", null, ""),
-                "float", Arrays.asList(Float.MAX_VALUE, null, ""),
-                "long", Arrays.asList(Long.MIN_VALUE, null, "")
+                "string", "A",
+                "float", "19.0",
+                "long", "asdj",
+                "double", 21.0d
             )
         )
     );
 
-    Row row = index.iterator().next();
+    expectedException.expect(ParseException.class);
+    expectedException.expectMessage("could not convert value [aaa] to float");
+    index.add(
+        new MapBasedInputRow(
+            System.currentTimeMillis() - 1,
+            Lists.newArrayList("string", "float", "long", "double"),
+            ImmutableMap.<String, Object>of(
+                "string", "A",
+                "float", "aaa",
+                "long", 20,
+                "double", 21.0d
+            )
+        )
+    );
 
-    Assert.assertEquals(Arrays.asList(new String[]{"", "", "A"}), row.getRaw("string"));
-    Assert.assertEquals(Arrays.asList(new String[]{"", "", String.valueOf(Float.MAX_VALUE)}), row.getRaw("float"));
-    Assert.assertEquals(Arrays.asList(new String[]{"", "", String.valueOf(Long.MIN_VALUE)}), row.getRaw("long"));
+    expectedException.expect(ParseException.class);
+    expectedException.expectMessage("could not convert value [] to double");
+    index.add(
+        new MapBasedInputRow(
+            System.currentTimeMillis() - 1,
+            Lists.newArrayList("string", "float", "long", "double"),
+            ImmutableMap.<String, Object>of(
+                "string", "A",
+                "float", 19.0,
+                "long", 20,
+                "double", ""
+            )
+        )
+    );
   }
 
   @Test
   public void sameRow() throws IndexSizeExceededException
   {
     MapBasedInputRow row = new MapBasedInputRow(
-        new DateTime().minus(1).getMillis(),
+        System.currentTimeMillis() - 1,
         Lists.newArrayList("billy", "joe"),
         ImmutableMap.<String, Object>of("billy", "A", "joe", "B")
     );

@@ -22,19 +22,23 @@ package io.druid.firehose.kafka;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterators;
 import com.google.common.collect.Maps;
 import com.google.common.io.Closeables;
-import com.metamx.emitter.EmittingLogger;
+import io.druid.java.util.common.parsers.ParseException;
+import io.druid.java.util.emitter.EmittingLogger;
 import io.druid.data.input.ByteBufferInputRowParser;
 import io.druid.data.input.Committer;
 import io.druid.data.input.FirehoseFactoryV2;
 import io.druid.data.input.FirehoseV2;
 import io.druid.data.input.InputRow;
 import io.druid.firehose.kafka.KafkaSimpleConsumer.BytesMessageWithOffset;
+import io.druid.java.util.common.StringUtils;
 
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -137,7 +141,7 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
       }
       log.info("Loaded offset map[%s]", offsetMap);
     } else {
-      log.makeAlert("Unable to cast lastCommit to Map for feed [%s]", feed);
+      log.makeAlert("Unable to cast lastCommit to Map for feed [%s]", feed).emit();
     }
     return offsetMap;
   }
@@ -173,6 +177,7 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
       private volatile boolean stopped;
       private volatile BytesMessageWithOffset msg = null;
       private volatile InputRow row = null;
+      private volatile Iterator<InputRow> nextIterator = Iterators.emptyIterator();
 
       {
         lastOffsetPartitions = Maps.newHashMap();
@@ -182,7 +187,6 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
       @Override
       public void start() throws Exception
       {
-        nextMessage();
       }
 
       @Override
@@ -201,14 +205,18 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
         try {
           row = null;
           while (row == null) {
-            if (msg != null) {
-              lastOffsetPartitions.put(msg.getPartition(), msg.offset());
+            if (!nextIterator.hasNext()) {
+              if (msg != null) {
+                lastOffsetPartitions.put(msg.getPartition(), msg.offset());
+              }
+              msg = messageQueue.take();
+              final byte[] message = msg.message();
+              nextIterator = message == null
+                             ? Iterators.emptyIterator()
+                             : firehoseParser.parseBatch(ByteBuffer.wrap(message)).iterator();
+              continue;
             }
-
-            msg = messageQueue.take();
-
-            final byte[] message = msg.message();
-            row = message == null ? null : firehoseParser.parse(ByteBuffer.wrap(message));
+            row = nextIterator.next();
           }
         }
         catch (InterruptedException e) {
@@ -223,6 +231,15 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
       {
         if (stopped) {
           return null;
+        }
+        // currRow will be called before the first advance
+        if (row == null) {
+          try {
+            nextMessage();
+          }
+          catch (ParseException e) {
+            return null;
+          }
         }
         return row;
       }
@@ -314,7 +331,7 @@ public class KafkaEightSimpleConsumerFirehoseFactory implements
         }
       };
       thread.setDaemon(true);
-      thread.setName(String.format("kafka-%s-%s", topic, partitionId));
+      thread.setName(StringUtils.format("kafka-%s-%s", topic, partitionId));
       thread.start();
     }
 

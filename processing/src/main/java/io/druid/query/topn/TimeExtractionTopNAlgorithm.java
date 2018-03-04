@@ -69,8 +69,8 @@ public class TimeExtractionTopNAlgorithm extends BaseTopNAlgorithm<int[], Map<St
   }
 
   @Override
-  protected void scanAndAggregate(
-      TopNParams params, int[] dimValSelector, Map<String, Aggregator[]> aggregatesStore, int numProcessed
+  protected long scanAndAggregate(
+      TopNParams params, int[] dimValSelector, Map<String, Aggregator[]> aggregatesStore
   )
   {
     if (params.getCardinality() < 0) {
@@ -80,6 +80,7 @@ public class TimeExtractionTopNAlgorithm extends BaseTopNAlgorithm<int[], Map<St
     final Cursor cursor = params.getCursor();
     final DimensionSelector dimSelector = params.getDimSelector();
 
+    long processedRows = 0;
     while (!cursor.isDone()) {
       final String key = dimSelector.lookupName(dimSelector.getRow().get(0));
 
@@ -94,7 +95,9 @@ public class TimeExtractionTopNAlgorithm extends BaseTopNAlgorithm<int[], Map<St
       }
 
       cursor.advance();
+      processedRows++;
     }
+    return processedRows;
   }
 
   @Override

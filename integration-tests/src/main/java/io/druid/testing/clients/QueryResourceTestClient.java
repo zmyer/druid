@@ -25,11 +25,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Charsets;
 import com.google.common.base.Throwables;
 import com.google.inject.Inject;
-import com.metamx.http.client.HttpClient;
-import com.metamx.http.client.Request;
-import com.metamx.http.client.response.StatusResponseHandler;
-import com.metamx.http.client.response.StatusResponseHolder;
+import io.druid.java.util.http.client.HttpClient;
+import io.druid.java.util.http.client.Request;
+import io.druid.java.util.http.client.response.StatusResponseHandler;
+import io.druid.java.util.http.client.response.StatusResponseHolder;
 import io.druid.java.util.common.ISE;
+import io.druid.java.util.common.StringUtils;
 import io.druid.query.Query;
 import io.druid.testing.IntegrationTestingConfig;
 import io.druid.testing.guice.TestClient;
@@ -62,15 +63,10 @@ public class QueryResourceTestClient
 
   private String getBrokerURL()
   {
-    return String.format(
+    return StringUtils.format(
         "%s/druid/v2/",
         routerUrl
     );
-  }
-
-  public List<Map<String, Object>> query(Query query)
-  {
-    return query(getBrokerURL(), query);
   }
 
   public List<Map<String, Object>> query(String url, Query query)

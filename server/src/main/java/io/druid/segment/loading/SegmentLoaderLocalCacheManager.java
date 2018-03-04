@@ -23,8 +23,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
 import com.google.common.primitives.Longs;
 import com.google.inject.Inject;
-import com.metamx.common.ISE;
-import com.metamx.emitter.EmittingLogger;
+import io.druid.java.util.emitter.EmittingLogger;
 import io.druid.guice.annotations.Json;
 import io.druid.segment.IndexIO;
 import io.druid.segment.Segment;
@@ -73,7 +72,11 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
 
     this.locations = Lists.newArrayList();
     for (StorageLocationConfig locationConfig : config.getLocations()) {
-      locations.add(new StorageLocation(locationConfig.getPath(), locationConfig.getMaxSize()));
+      locations.add(new StorageLocation(
+          locationConfig.getPath(),
+          locationConfig.getMaxSize(),
+          locationConfig.getFreeSpacePercent()
+      ));
     }
   }
 
@@ -91,7 +94,7 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
   public StorageLocation findStorageLocationIfLoaded(final DataSegment segment)
   {
     for (StorageLocation location : getSortedList(locations)) {
-      File localStorageDir = new File(location.getPath(), DataSegmentPusherUtil.getStorageDir(segment));
+      File localStorageDir = new File(location.getPath(), DataSegmentPusher.getDefaultStorageDir(segment));
       if (localStorageDir.exists()) {
         return location;
       }
@@ -124,7 +127,7 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
   public File getSegmentFiles(DataSegment segment) throws SegmentLoadingException
   {
     StorageLocation loc = findStorageLocationIfLoaded(segment);
-    String storageDir = DataSegmentPusherUtil.getStorageDir(segment);
+    String storageDir = DataSegmentPusher.getDefaultStorageDir(segment);
 
     if (loc == null) {
       loc = loadSegmentWithRetry(segment, storageDir);
@@ -141,33 +144,28 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
   private StorageLocation loadSegmentWithRetry(DataSegment segment, String storageDirStr) throws SegmentLoadingException
   {
     for (StorageLocation loc : getSortedList(locations)) {
-      // locIter is ordered from empty to full
-      if (!loc.canHandle(segment.getSize())) {
-        throw new ISE(
-            "Segment[%s:%,d] too large for storage[%s:%,d].",
-            segment.getIdentifier(), segment.getSize(), loc.getPath(), loc.available()
-        );
-      }
-      File storageDir = new File(loc.getPath(), storageDirStr);
-
-      try {
-        loadInLocationWithStartMarker(segment, storageDir);
-        return loc;
-      }
-      catch (SegmentLoadingException e) {
-        log.makeAlert(
-            e,
-            "Failed to load segment in current location %s, try next location if any",
-            loc.getPath().getAbsolutePath()
-        )
-           .addData("location", loc.getPath().getAbsolutePath())
-           .emit();
+      if (loc.canHandle(segment)) {
+        File storageDir = new File(loc.getPath(), storageDirStr);
 
         try {
-          cleanupCacheFiles(loc.getPath(), storageDir);
+          loadInLocationWithStartMarker(segment, storageDir);
+          return loc;
         }
-        catch (IOException e1) {
-          log.error(e1, "Failed to cleanup location " + storageDir.getAbsolutePath());
+        catch (SegmentLoadingException e) {
+          log.makeAlert(
+              e,
+              "Failed to load segment in current location %s, try next location if any",
+              loc.getPath().getAbsolutePath()
+          )
+             .addData("location", loc.getPath().getAbsolutePath())
+             .emit();
+
+          try {
+            cleanupCacheFiles(loc.getPath(), storageDir);
+          }
+          catch (IOException e1) {
+            log.error(e1, "Failed to cleanup location " + storageDir.getAbsolutePath());
+          }
         }
       }
     }
@@ -201,7 +199,8 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
 
   private void loadInLocation(DataSegment segment, File storageDir) throws SegmentLoadingException
   {
-    // LoadSpec isn't materialized until here so that any system can interpret Segment without having to have all the LoadSpec dependencies.
+    // LoadSpec isn't materialized until here so that any system can interpret Segment without having to have all the
+    // LoadSpec dependencies.
     final LoadSpec loadSpec = jsonMapper.convertValue(segment.getLoadSpec(), LoadSpec.class);
     final LoadSpec.LoadSpecResult result = loadSpec.loadSegment(storageDir);
     if (result.getSize() != segment.getSize()) {
@@ -233,11 +232,11 @@ public class SegmentLoaderLocalCacheManager implements SegmentLoader
       // in this case, findStorageLocationIfLoaded() will think segment is located in the failed storageDir which is actually not.
       // So we should always clean all possible locations here
       for (StorageLocation location : getSortedList(locations)) {
-        File localStorageDir = new File(location.getPath(), DataSegmentPusherUtil.getStorageDir(segment));
+        File localStorageDir = new File(location.getPath(), DataSegmentPusher.getDefaultStorageDir(segment));
         if (localStorageDir.exists()) {
           // Druid creates folders of the form dataSource/interval/version/partitionNum.
           // We need to clean up all these directories if they are all empty.
-          File cacheFile = new File(location.getPath(), DataSegmentPusherUtil.getStorageDir(segment));
+          File cacheFile = new File(location.getPath(), DataSegmentPusher.getDefaultStorageDir(segment));
           cleanupCacheFiles(location.getPath(), cacheFile);
           location.removeSegment(segment);
         }

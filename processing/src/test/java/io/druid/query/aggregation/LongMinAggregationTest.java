@@ -19,9 +19,8 @@
 
 package io.druid.query.aggregation;
 
-import com.google.common.primitives.Longs;
-import io.druid.jackson.DefaultObjectMapper;
 import io.druid.segment.ColumnSelectorFactory;
+import io.druid.segment.TestHelper;
 import org.easymock.EasyMock;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,7 +41,7 @@ public class LongMinAggregationTest
   public LongMinAggregationTest() throws Exception
   {
     String aggSpecJson = "{\"type\": \"longMin\", \"name\": \"billy\", \"fieldName\": \"nilly\"}";
-    longMinAggFactory = new DefaultObjectMapper().readValue(aggSpecJson , LongMinAggregatorFactory.class);
+    longMinAggFactory = TestHelper.makeJsonMapper().readValue(aggSpecJson, LongMinAggregatorFactory.class);
   }
 
   @Before
@@ -50,14 +49,14 @@ public class LongMinAggregationTest
   {
     selector = new TestLongColumnSelector(values);
     colSelectorFactory = EasyMock.createMock(ColumnSelectorFactory.class);
-    EasyMock.expect(colSelectorFactory.makeLongColumnSelector("nilly")).andReturn(selector);
+    EasyMock.expect(colSelectorFactory.makeColumnValueSelector("nilly")).andReturn(selector);
     EasyMock.replay(colSelectorFactory);
   }
 
   @Test
   public void testLongMinAggregator()
   {
-    LongMinAggregator agg = (LongMinAggregator)longMinAggFactory.factorize(colSelectorFactory);
+    LongMinAggregator agg = (LongMinAggregator) longMinAggFactory.factorize(colSelectorFactory);
 
     aggregate(selector, agg);
     aggregate(selector, agg);
@@ -67,17 +66,14 @@ public class LongMinAggregationTest
     Assert.assertEquals(values[2], ((Long) agg.get()).longValue());
     Assert.assertEquals(values[2], agg.getLong());
     Assert.assertEquals((float) values[2], agg.getFloat(), 0.0001);
-
-    agg.reset();
-    Assert.assertEquals(Long.MAX_VALUE, agg.getLong());
   }
 
   @Test
   public void testLongMinBufferAggregator()
   {
-    LongMinBufferAggregator agg = (LongMinBufferAggregator)longMinAggFactory.factorizeBuffered(colSelectorFactory);
+    LongMinBufferAggregator agg = (LongMinBufferAggregator) longMinAggFactory.factorizeBuffered(colSelectorFactory);
 
-    ByteBuffer buffer = ByteBuffer.wrap(new byte[Longs.BYTES]);
+    ByteBuffer buffer = ByteBuffer.wrap(new byte[Long.BYTES]);
     agg.init(buffer, 0);
 
     aggregate(selector, agg, buffer, 0);
@@ -87,7 +83,7 @@ public class LongMinAggregationTest
 
     Assert.assertEquals(values[2], ((Long) agg.get(buffer, 0)).longValue());
     Assert.assertEquals(values[2], agg.getLong(buffer, 0));
-    Assert.assertEquals((float)values[2], agg.getFloat(buffer, 0), 0.0001);
+    Assert.assertEquals((float) values[2], agg.getFloat(buffer, 0), 0.0001);
   }
 
   @Test

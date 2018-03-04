@@ -21,6 +21,11 @@ package io.druid.sql.calcite.planner;
 
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
+import io.druid.java.util.common.DateTimes;
+import io.druid.math.expr.ExprMacroTable;
+import io.druid.server.security.AuthenticationResult;
+import io.druid.server.security.AuthorizerMapper;
 import org.apache.calcite.DataContext;
 import org.apache.calcite.adapter.java.JavaTypeFactory;
 import org.apache.calcite.linq4j.QueryProvider;
@@ -37,26 +42,46 @@ import java.util.Map;
  */
 public class PlannerContext
 {
+  // query context keys
   public static final String CTX_SQL_CURRENT_TIMESTAMP = "sqlCurrentTimestamp";
   public static final String CTX_SQL_TIME_ZONE = "sqlTimeZone";
 
+  // DataContext keys
+  public static final String DATA_CTX_AUTHENTICATION_RESULT = "authenticationResult";
+
+  private final DruidOperatorTable operatorTable;
+  private final ExprMacroTable macroTable;
   private final PlannerConfig plannerConfig;
   private final DateTime localNow;
+  private final long queryStartTimeMillis;
   private final Map<String, Object> queryContext;
+  private final AuthorizerMapper authorizerMapper;
+
+  private AuthenticationResult authenticationResult;
 
   private PlannerContext(
+      final DruidOperatorTable operatorTable,
+      final ExprMacroTable macroTable,
       final PlannerConfig plannerConfig,
       final DateTime localNow,
+      final AuthorizerMapper authorizerMapper,
       final Map<String, Object> queryContext
   )
   {
+    this.operatorTable = operatorTable;
+    this.macroTable = macroTable;
     this.plannerConfig = Preconditions.checkNotNull(plannerConfig, "plannerConfig");
-    this.queryContext = queryContext != null ? ImmutableMap.copyOf(queryContext) : ImmutableMap.<String, Object>of();
+    this.queryContext = queryContext != null ? Maps.newHashMap(queryContext) : Maps.newHashMap();
     this.localNow = Preconditions.checkNotNull(localNow, "localNow");
+    this.queryStartTimeMillis = System.currentTimeMillis();
+    this.authorizerMapper = authorizerMapper;
   }
 
   public static PlannerContext create(
+      final DruidOperatorTable operatorTable,
+      final ExprMacroTable macroTable,
       final PlannerConfig plannerConfig,
+      final AuthorizerMapper authorizerMapper,
       final Map<String, Object> queryContext
   )
   {
@@ -74,7 +99,7 @@ public class PlannerContext
       }
 
       if (tzParam != null) {
-        timeZone = DateTimeZone.forID(String.valueOf(tzParam));
+        timeZone = DateTimes.inferTzfromString(String.valueOf(tzParam));
       } else {
         timeZone = DateTimeZone.UTC;
       }
@@ -83,7 +108,24 @@ public class PlannerContext
       timeZone = DateTimeZone.UTC;
     }
 
-    return new PlannerContext(plannerConfig.withOverrides(queryContext), utcNow.withZone(timeZone), queryContext);
+    return new PlannerContext(
+        operatorTable,
+        macroTable,
+        plannerConfig.withOverrides(queryContext),
+        utcNow.withZone(timeZone),
+        authorizerMapper,
+        queryContext
+    );
+  }
+
+  public DruidOperatorTable getOperatorTable()
+  {
+    return operatorTable;
+  }
+
+  public ExprMacroTable getExprMacroTable()
+  {
+    return macroTable;
   }
 
   public PlannerConfig getPlannerConfig()
@@ -106,6 +148,21 @@ public class PlannerContext
     return queryContext;
   }
 
+  public long getQueryStartTimeMillis()
+  {
+    return queryStartTimeMillis;
+  }
+
+  public AuthenticationResult getAuthenticationResult()
+  {
+    return authenticationResult;
+  }
+
+  public void setAuthenticationResult(AuthenticationResult authenticationResult)
+  {
+    this.authenticationResult = authenticationResult;
+  }
+
   public DataContext createDataContext(final JavaTypeFactory typeFactory)
   {
     class DruidDataContext implements DataContext
@@ -117,7 +174,8 @@ public class PlannerContext
               new DateTime("1970-01-01T00:00:00.000", localNow.getZone()),
               localNow
           ).toDurationMillis(),
-          DataContext.Variable.TIME_ZONE.camelName, localNow.getZone().toTimeZone()
+          DataContext.Variable.TIME_ZONE.camelName, localNow.getZone().toTimeZone().clone(),
+          DATA_CTX_AUTHENTICATION_RESULT, authenticationResult
       );
 
       @Override

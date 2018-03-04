@@ -22,8 +22,8 @@ package io.druid.query;
 import com.google.common.util.concurrent.ForwardingListeningExecutorService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.ListeningExecutorService;
-import com.metamx.emitter.service.ServiceEmitter;
-import com.metamx.emitter.service.ServiceMetricEvent;
+import io.druid.java.util.emitter.service.ServiceEmitter;
+import io.druid.java.util.emitter.service.ServiceMetricEvent;
 
 import java.util.concurrent.Callable;
 
@@ -48,6 +48,7 @@ public class MetricsEmittingExecutorService extends ForwardingListeningExecutorS
     return delegate;
   }
 
+  @SuppressWarnings("ParameterPackage")
   @Override
   public <T> ListenableFuture<T> submit(Callable<T> tCallable)
   {

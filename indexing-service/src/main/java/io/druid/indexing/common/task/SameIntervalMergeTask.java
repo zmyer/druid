@@ -25,12 +25,14 @@ import com.google.common.base.Preconditions;
 import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.TaskToolbox;
 import io.druid.indexing.common.actions.SegmentListUsedAction;
+import io.druid.java.util.common.DateTimes;
+import io.druid.segment.writeout.SegmentWriteOutMediumFactory;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.segment.IndexSpec;
 import io.druid.timeline.DataSegment;
-import org.joda.time.DateTime;
 import org.joda.time.Interval;
 
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 
@@ -38,13 +40,13 @@ import java.util.Map;
  */
 public class SameIntervalMergeTask extends AbstractFixedIntervalTask
 {
-  private static final Boolean defaultBuildV9Directly = Boolean.TRUE;
   private static final String TYPE = "same_interval_merge";
   @JsonIgnore
   private final List<AggregatorFactory> aggregators;
   private final Boolean rollup;
   private final IndexSpec indexSpec;
-  private final Boolean buildV9Directly;
+  @Nullable
+  private final SegmentWriteOutMediumFactory segmentWriteOutMediumFactory;
 
   public SameIntervalMergeTask(
       @JsonProperty("id") String id,
@@ -53,7 +55,10 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
       @JsonProperty("aggregations") List<AggregatorFactory> aggregators,
       @JsonProperty("rollup") Boolean rollup,
       @JsonProperty("indexSpec") IndexSpec indexSpec,
+      // This parameter is left for compatibility when reading existing JSONs, to be removed in Druid 0.12.
+      @SuppressWarnings("unused")
       @JsonProperty("buildV9Directly") Boolean buildV9Directly,
+      @JsonProperty("segmentWriteOutMediumFactory") @Nullable SegmentWriteOutMediumFactory segmentWriteOutMediumFactory,
       @JsonProperty("context") Map<String, Object> context
   )
   {
@@ -66,7 +71,7 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
     this.aggregators = Preconditions.checkNotNull(aggregators, "null aggregations");
     this.rollup = rollup == null ? Boolean.TRUE : rollup;
     this.indexSpec = indexSpec == null ? new IndexSpec() : indexSpec;
-    this.buildV9Directly = buildV9Directly == null ? defaultBuildV9Directly : buildV9Directly;
+    this.segmentWriteOutMediumFactory = segmentWriteOutMediumFactory;
   }
 
   @JsonProperty("aggregations")
@@ -87,10 +92,14 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
     return indexSpec;
   }
 
+  /**
+   * Always returns true, doesn't affect the version being built.
+   */
+  @Deprecated
   @JsonProperty
   public Boolean getBuildV9Directly()
   {
-    return buildV9Directly;
+    return true;
   }
 
   public static String makeId(String id, final String typeName, String dataSource, Interval interval)
@@ -100,7 +109,7 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
         dataSource,
         interval.getStart(),
         interval.getEnd(),
-        new DateTime().toString()
+        DateTimes.nowUtc().toString()
     );
   }
 
@@ -127,7 +136,7 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
         aggregators,
         rollup,
         indexSpec,
-        buildV9Directly,
+        segmentWriteOutMediumFactory,
         getContext()
     );
     final TaskStatus status = mergeTask.run(toolbox);
@@ -139,14 +148,14 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
 
   public static class SubTask extends MergeTask
   {
-    public SubTask(
+    private SubTask(
         String baseId,
         String dataSource,
         List<DataSegment> segments,
         List<AggregatorFactory> aggregators,
         Boolean rollup,
         IndexSpec indexSpec,
-        Boolean buildV9Directly,
+        @Nullable SegmentWriteOutMediumFactory segmentWriteOutMediumFactory,
         Map<String, Object> context
     )
     {
@@ -157,7 +166,8 @@ public class SameIntervalMergeTask extends AbstractFixedIntervalTask
           aggregators,
           rollup,
           indexSpec,
-          buildV9Directly,
+          true,
+          segmentWriteOutMediumFactory,
           context
       );
     }

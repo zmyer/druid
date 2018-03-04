@@ -25,10 +25,11 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.RangeSet;
 import com.google.common.collect.TreeRangeSet;
-import io.druid.query.Druids;
+import io.druid.java.util.common.StringUtils;
 import io.druid.segment.filter.AndFilter;
 import io.druid.segment.filter.Filters;
 
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -37,7 +38,7 @@ public class AndDimFilter implements DimFilter
 {
   private static final Joiner AND_JOINER = Joiner.on(" && ");
 
-  final private List<DimFilter> fields;
+  private final List<DimFilter> fields;
 
   @JsonCreator
   public AndDimFilter(
@@ -47,6 +48,11 @@ public class AndDimFilter implements DimFilter
     fields = DimFilters.filterNulls(fields);
     Preconditions.checkArgument(fields.size() > 0, "AND operator requires at least one field");
     this.fields = fields;
+  }
+
+  public AndDimFilter(DimFilter... fields)
+  {
+    this(Arrays.asList(fields));
   }
 
   @JsonProperty
@@ -65,7 +71,7 @@ public class AndDimFilter implements DimFilter
   public DimFilter optimize()
   {
     List<DimFilter> elements = DimFilters.optimize(fields);
-    return elements.size() == 1 ? elements.get(0) : Druids.newAndDimFilterBuilder().fields(elements).build();
+    return elements.size() == 1 ? elements.get(0) : new AndDimFilter(elements);
   }
 
   @Override
@@ -119,6 +125,6 @@ public class AndDimFilter implements DimFilter
   @Override
   public String toString()
   {
-    return String.format("(%s)", AND_JOINER.join(fields));
+    return StringUtils.format("(%s)", AND_JOINER.join(fields));
   }
 }

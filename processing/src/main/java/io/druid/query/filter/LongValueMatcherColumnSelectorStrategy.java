@@ -19,14 +19,16 @@
 
 package io.druid.query.filter;
 
+import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
+import io.druid.segment.BaseLongColumnValueSelector;
 import io.druid.segment.DimensionHandlerUtils;
-import io.druid.segment.LongColumnSelector;
 import io.druid.segment.filter.BooleanValueMatcher;
 
-public class LongValueMatcherColumnSelectorStrategy implements ValueMatcherColumnSelectorStrategy<LongColumnSelector>
+public class LongValueMatcherColumnSelectorStrategy
+    implements ValueMatcherColumnSelectorStrategy<BaseLongColumnValueSelector>
 {
   @Override
-  public ValueMatcher makeValueMatcher(final LongColumnSelector selector, final String value)
+  public ValueMatcher makeValueMatcher(final BaseLongColumnValueSelector selector, final String value)
   {
     final Long matchVal = DimensionHandlerUtils.convertObjectToLong(value);
     if (matchVal == null) {
@@ -38,14 +40,21 @@ public class LongValueMatcherColumnSelectorStrategy implements ValueMatcherColum
       @Override
       public boolean matches()
       {
-        return selector.get() == matchValLong;
+        return selector.getLong() == matchValLong;
+      }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        inspector.visit("selector", selector);
       }
     };
   }
 
   @Override
   public ValueMatcher makeValueMatcher(
-      final LongColumnSelector selector, DruidPredicateFactory predicateFactory
+      final BaseLongColumnValueSelector selector,
+      DruidPredicateFactory predicateFactory
   )
   {
     final DruidLongPredicate predicate = predicateFactory.makeLongPredicate();
@@ -54,20 +63,27 @@ public class LongValueMatcherColumnSelectorStrategy implements ValueMatcherColum
       @Override
       public boolean matches()
       {
-        return predicate.applyLong(selector.get());
+        return predicate.applyLong(selector.getLong());
+      }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        inspector.visit("selector", selector);
+        inspector.visit("predicate", predicate);
       }
     };
   }
 
   @Override
-  public ValueGetter makeValueGetter(final LongColumnSelector selector)
+  public ValueGetter makeValueGetter(final BaseLongColumnValueSelector selector)
   {
     return new ValueGetter()
     {
       @Override
       public String[] get()
       {
-        return new String[]{ Long.toString(selector.get()) };
+        return new String[]{Long.toString(selector.getLong())};
       }
     };
   }

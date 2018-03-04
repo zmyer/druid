@@ -28,7 +28,7 @@ import com.google.inject.Key;
 import com.google.inject.Provides;
 import com.google.inject.name.Named;
 import com.google.inject.name.Names;
-import com.metamx.emitter.core.Emitter;
+import io.druid.java.util.emitter.core.Emitter;
 import io.druid.guice.JsonConfigProvider;
 import io.druid.guice.ManageLifecycle;
 import io.druid.initialization.DruidModule;
@@ -54,7 +54,8 @@ public class AmbariMetricsEmitterModule implements DruidModule
   @Provides
   @ManageLifecycle
   @Named(EMITTER_TYPE)
-  public Emitter getEmitter(AmbariMetricsEmitterConfig emitterConfig, final Injector injector){
+  public Emitter getEmitter(AmbariMetricsEmitterConfig emitterConfig, final Injector injector)
+  {
     List<Emitter> emitters = Lists.transform(
         emitterConfig.getAlertEmitters(),
         new Function<String, Emitter>()

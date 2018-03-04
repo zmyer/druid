@@ -22,7 +22,6 @@ package io.druid.segment;
 import com.google.common.base.Supplier;
 import com.google.common.base.Suppliers;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.CharSource;
 import io.druid.data.input.impl.DelimitedParseSpec;
@@ -30,9 +29,9 @@ import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.StringInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
 import io.druid.jackson.DefaultObjectMapper;
-import io.druid.java.util.common.granularity.Granularities;
-import io.druid.java.util.common.guava.Sequences;
+import io.druid.java.util.common.DateTimes;
 import io.druid.query.Druids;
+import io.druid.query.QueryPlus;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryRunnerTestHelper;
 import io.druid.query.Result;
@@ -46,8 +45,6 @@ import io.druid.query.select.SelectQueryRunnerFactory;
 import io.druid.query.select.SelectResultValue;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.IncrementalIndexSchema;
-import io.druid.segment.incremental.OnheapIncrementalIndex;
-import org.joda.time.DateTime;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -55,14 +52,9 @@ import org.junit.runners.Parameterized;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
-import static io.druid.query.QueryRunnerTestHelper.allGran;
-import static io.druid.query.QueryRunnerTestHelper.dataSource;
-import static io.druid.query.QueryRunnerTestHelper.fullOnInterval;
-import static io.druid.query.QueryRunnerTestHelper.makeQueryRunner;
-import static io.druid.query.QueryRunnerTestHelper.transformToConstructionFeeder;
 
 /**
  */
@@ -80,15 +72,17 @@ public class MapVirtualColumnTest
             QueryRunnerTestHelper.NoopIntervalChunkingQueryRunnerDecorator(),
             selectConfigSupplier
         ),
-        new SelectQueryEngine(selectConfigSupplier),
+        new SelectQueryEngine(),
         QueryRunnerTestHelper.NOOP_QUERYWATCHER
     );
 
     final IncrementalIndexSchema schema = new IncrementalIndexSchema.Builder()
-        .withMinTimestamp(new DateTime("2011-01-12T00:00:00.000Z").getMillis())
-        .withQueryGranularity(Granularities.NONE)
+        .withMinTimestamp(DateTimes.of("2011-01-12T00:00:00.000Z").getMillis())
         .build();
-    final IncrementalIndex index = new OnheapIncrementalIndex(schema, true, 10000);
+    final IncrementalIndex index = new IncrementalIndex.Builder()
+        .setIndexSchema(schema)
+        .setMaxRowCount(10000)
+        .buildOnheap();
 
     final StringInputRowParser parser = new StringInputRowParser(
         new DelimitedParseSpec(
@@ -96,9 +90,11 @@ public class MapVirtualColumnTest
             new DimensionsSpec(DimensionsSpec.getDefaultSchemas(Arrays.asList("dim", "keys", "values")), null, null),
             "\t",
             ",",
-            Arrays.asList("ts", "dim", "keys", "values")
-        )
-        , "utf8"
+            Arrays.asList("ts", "dim", "keys", "values"),
+            false,
+            0
+        ),
+        "utf8"
     );
 
     CharSource input = CharSource.wrap(
@@ -110,10 +106,20 @@ public class MapVirtualColumnTest
     IncrementalIndex index1 = TestIndex.loadIncrementalIndex(index, input, parser);
     QueryableIndex index2 = TestIndex.persistRealtimeAndLoadMMapped(index1);
 
-    return transformToConstructionFeeder(
+    return QueryRunnerTestHelper.transformToConstructionFeeder(
         Arrays.asList(
-            makeQueryRunner(factory, "index1", new IncrementalIndexSegment(index1, "index1"), "incremental"),
-            makeQueryRunner(factory, "index2", new QueryableIndexSegment("index2", index2), "queryable")
+            QueryRunnerTestHelper.makeQueryRunner(
+                factory,
+                "index1",
+                new IncrementalIndexSegment(index1, "index1"),
+                "incremental"
+            ),
+            QueryRunnerTestHelper.makeQueryRunner(
+                factory,
+                "index2",
+                new QueryableIndexSegment("index2", index2),
+                "queryable"
+            )
         )
     );
   }
@@ -128,9 +134,9 @@ public class MapVirtualColumnTest
   private Druids.SelectQueryBuilder testBuilder()
   {
     return Druids.newSelectQueryBuilder()
-                 .dataSource(dataSource)
-                 .granularity(allGran)
-                 .intervals(fullOnInterval)
+                 .dataSource(QueryRunnerTestHelper.dataSource)
+                 .granularity(QueryRunnerTestHelper.allGran)
+                 .intervals(QueryRunnerTestHelper.fullOnInterval)
                  .pagingSpec(new PagingSpec(null, 3));
   }
 
@@ -162,8 +168,8 @@ public class MapVirtualColumnTest
             "params", mapOf("key1", "value1", "key5", "value5")
         )
     );
-    List<VirtualColumn> virtualColumns = Arrays.<VirtualColumn>asList(new MapVirtualColumn("keys", "values", "params"));
-    SelectQuery selectQuery = builder.dimensions(Arrays.asList("dim"))
+    List<VirtualColumn> virtualColumns = Collections.singletonList(new MapVirtualColumn("keys", "values", "params"));
+    SelectQuery selectQuery = builder.dimensions(Collections.singletonList("dim"))
                                      .metrics(Arrays.asList("params.key1", "params.key3", "params.key5", "params"))
                                      .virtualColumns(virtualColumns)
                                      .build();
@@ -181,10 +187,7 @@ public class MapVirtualColumnTest
 
   private void checkSelectQuery(SelectQuery searchQuery, List<Map> expected) throws Exception
   {
-    List<Result<SelectResultValue>> results = Sequences.toList(
-        runner.run(searchQuery, ImmutableMap.of()),
-        Lists.<Result<SelectResultValue>>newArrayList()
-    );
+    List<Result<SelectResultValue>> results = runner.run(QueryPlus.wrap(searchQuery), ImmutableMap.of()).toList();
     Assert.assertEquals(1, results.size());
 
     List<EventHolder> events = results.get(0).getValue().getEvents();

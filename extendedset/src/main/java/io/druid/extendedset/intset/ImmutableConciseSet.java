@@ -19,8 +19,8 @@ package io.druid.extendedset.intset;
 
 import com.google.common.collect.Iterators;
 import com.google.common.collect.UnmodifiableIterator;
-import com.google.common.primitives.Ints;
 import io.druid.extendedset.utilities.IntList;
+import org.roaringbitmap.IntIterator;
 
 import java.nio.ByteBuffer;
 import java.nio.IntBuffer;
@@ -33,13 +33,13 @@ import java.util.PriorityQueue;
 
 public class ImmutableConciseSet
 {
-  private final static int CHUNK_SIZE = 10000;
+  private static final int CHUNK_SIZE = 10000;
 
   private static final Comparator<WordIterator> UNION_COMPARATOR = new Comparator<WordIterator>()
   {
     // Comparison is first by index, then one fills < literals < zero fills
     // one fills are sorted by length (longer one fills have priority)
-    // similarily, shorter zero fills have priority
+    // similarly, shorter zero fills have priority
     @Override
     public int compare(WordIterator i1, WordIterator i2)
     {
@@ -82,7 +82,7 @@ public class ImmutableConciseSet
   {
     // Comparison is first by index, then zero fills < literals < one fills
     // zero fills are sorted by length (longer zero fills have priority)
-    // similarily, shorter one fills have priority
+    // similarly, shorter one fills have priority
     @Override
     public int compare(WordIterator i1, WordIterator i2)
     {
@@ -810,7 +810,7 @@ public class ImmutableConciseSet
     if (words == null) {
       return new byte[]{};
     }
-    ByteBuffer buf = ByteBuffer.allocate(words.capacity() * Ints.BYTES);
+    ByteBuffer buf = ByteBuffer.allocate(words.capacity() * Integer.BYTES);
     buf.asIntBuffer().put(words.asReadOnlyBuffer());
     return buf.array();
   }
@@ -927,10 +927,9 @@ public class ImmutableConciseSet
             }
           } else {
             setBitsInCurrentWord = sequenceLength - 1;
-            if (position < setBitsInCurrentWord)
-            // check whether the desired set bit is after the
-            // flipped bit (or after the first block)
-            {
+            if (position < setBitsInCurrentWord) {
+              // check whether the desired set bit is after the
+              // flipped bit (or after the first block)
               return firstSetBitInWord + position + (position < ConciseSetUtils.getFlippedBit(w) ? 0 : 1);
             }
           }
@@ -977,7 +976,7 @@ public class ImmutableConciseSet
 
     StringBuilder sb = new StringBuilder();
     sb.append('[');
-    for (; ; ) {
+    while (true) {
       sb.append(itr.next());
       if (!itr.hasNext()) {
         return sb.append(']').toString();
@@ -1000,7 +999,7 @@ public class ImmutableConciseSet
     return new WordIterator();
   }
 
-  public class WordIterator implements org.roaringbitmap.IntIterator, Cloneable
+  public class WordIterator implements IntIterator, Cloneable
   {
     private int startIndex;
     private int wordsWalked;

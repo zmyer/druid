@@ -19,10 +19,10 @@
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableList;
-import com.metamx.emitter.service.ServiceMetricEvent;
+import io.druid.java.util.emitter.service.ServiceMetricEvent;
 import io.druid.emitter.statsd.DimensionConverter;
 import io.druid.emitter.statsd.StatsDMetric;
-import org.joda.time.DateTime;
+import io.druid.java.util.common.DateTimes;
 import org.junit.Test;
 
 import static org.junit.Assert.assertEquals;
@@ -46,7 +46,7 @@ public class DimensionConverterTest
         .setDimension("remoteAddress", "194.0.90.2")
         .setDimension("id", "ID")
         .setDimension("context", "{context}")
-        .build(new DateTime(), "query/time", 10)
+        .build(DateTimes.nowUtc(), "query/time", 10)
         .build("broker", "brokerHost1");
 
     ImmutableList.Builder<String> actual = new ImmutableList.Builder<>();

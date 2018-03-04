@@ -32,15 +32,21 @@ import java.util.Map;
  */
 public class NoneShardSpec implements ShardSpec
 {
-  private final static NoneShardSpec INSTANCE = new NoneShardSpec();
+  private static final NoneShardSpec INSTANCE = new NoneShardSpec();
 
   @JsonCreator
-  public static NoneShardSpec instance() { return INSTANCE; }
+  public static NoneShardSpec instance()
+  {
+    return INSTANCE;
+  }
 
+  /**
+   * @deprecated use {@link #instance()} instead
+   */
   @Deprecated
-  // Use NoneShardSpec.instance() instead
-  public NoneShardSpec(){
-
+  public NoneShardSpec()
+  {
+    // empty
   }
 
   @Override

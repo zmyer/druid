@@ -23,13 +23,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Function;
 import com.google.common.base.Predicate;
 import com.google.common.base.Strings;
-import com.google.common.collect.Lists;
 import com.google.common.io.Files;
 import io.druid.benchmark.datagen.BenchmarkDataGenerator;
 import io.druid.benchmark.datagen.BenchmarkSchemaInfo;
 import io.druid.benchmark.datagen.BenchmarkSchemas;
 import io.druid.data.input.InputRow;
-import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.hll.HyperLogLogHash;
 import io.druid.jackson.DefaultObjectMapper;
 import io.druid.java.util.common.granularity.Granularities;
@@ -37,6 +35,7 @@ import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.java.util.common.logger.Logger;
 import io.druid.js.JavaScriptConfig;
+import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesSerde;
 import io.druid.query.dimension.DefaultDimensionSpec;
 import io.druid.query.extraction.ExtractionFn;
@@ -45,6 +44,7 @@ import io.druid.query.filter.AndDimFilter;
 import io.druid.query.filter.BitmapIndexSelector;
 import io.druid.query.filter.BoundDimFilter;
 import io.druid.query.filter.DimFilter;
+import io.druid.query.filter.DruidDoublePredicate;
 import io.druid.query.filter.DruidFloatPredicate;
 import io.druid.query.filter.DruidLongPredicate;
 import io.druid.query.filter.DruidPredicateFactory;
@@ -52,12 +52,12 @@ import io.druid.query.filter.Filter;
 import io.druid.query.filter.OrDimFilter;
 import io.druid.query.filter.SelectorDimFilter;
 import io.druid.query.ordering.StringComparators;
+import io.druid.segment.BaseLongColumnValueSelector;
 import io.druid.segment.Cursor;
 import io.druid.segment.DimensionSelector;
 import io.druid.segment.IndexIO;
 import io.druid.segment.IndexMergerV9;
 import io.druid.segment.IndexSpec;
-import io.druid.segment.LongColumnSelector;
 import io.druid.segment.QueryableIndex;
 import io.druid.segment.QueryableIndexStorageAdapter;
 import io.druid.segment.StorageAdapter;
@@ -72,8 +72,6 @@ import io.druid.segment.filter.Filters;
 import io.druid.segment.filter.OrFilter;
 import io.druid.segment.filter.SelectorFilter;
 import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.IncrementalIndexSchema;
-import io.druid.segment.incremental.OnheapIncrementalIndex;
 import io.druid.segment.serde.ComplexMetrics;
 import org.apache.commons.io.FileUtils;
 import org.joda.time.Interval;
@@ -100,7 +98,7 @@ import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 @State(Scope.Benchmark)
-@Fork(jvmArgsPrepend = "-server", value = 1)
+@Fork(value = 1)
 @Warmup(iterations = 10)
 @Measurement(iterations = 25)
 public class FilterPartitionBenchmark
@@ -134,6 +132,7 @@ public class FilterPartitionBenchmark
     JSON_MAPPER = new DefaultObjectMapper();
     INDEX_IO = new IndexIO(
         JSON_MAPPER,
+        OffHeapMemorySegmentWriteOutMediumFactory.instance(),
         new ColumnConfig()
         {
           @Override
@@ -143,7 +142,7 @@ public class FilterPartitionBenchmark
           }
         }
     );
-    INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO);
+    INDEX_MERGER_V9 = new IndexMergerV9(JSON_MAPPER, INDEX_IO, OffHeapMemorySegmentWriteOutMediumFactory.instance());
   }
 
   @Setup
@@ -180,7 +179,8 @@ public class FilterPartitionBenchmark
     indexFile = INDEX_MERGER_V9.persist(
         incIndex,
         tmpDir,
-        new IndexSpec()
+        new IndexSpec(),
+        null
     );
     qIndex = INDEX_IO.loadIndex(indexFile);
 
@@ -228,17 +228,11 @@ public class FilterPartitionBenchmark
 
   private IncrementalIndex makeIncIndex()
   {
-    return new OnheapIncrementalIndex(
-        new IncrementalIndexSchema.Builder()
-            .withQueryGranularity(Granularities.NONE)
-            .withMetrics(schemaInfo.getAggsArray())
-            .withDimensionsSpec(new DimensionsSpec(null, null, null))
-            .build(),
-        true,
-        false,
-        true,
-        rowsPerSegment
-    );
+    return new IncrementalIndex.Builder()
+        .setSimpleTestingIndexSchema(schemaInfo.getAggsArray())
+        .setReportParseExceptions(false)
+        .setMaxRowCount(rowsPerSegment)
+        .buildOnheap();
   }
 
   @Benchmark
@@ -250,7 +244,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, null);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -265,7 +259,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, null);
 
     Sequence<List<Long>> longListSeq = readCursorsLong(cursors, blackhole);
-    List<Long> strings = Sequences.toList(Sequences.limit(longListSeq, 1), Lists.<List<Long>>newArrayList()).get(0);
+    List<Long> strings = longListSeq.limit(1).toList().get(0);
     for (Long st : strings) {
       blackhole.consume(st);
     }
@@ -280,7 +274,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, timeFilterNone);
 
     Sequence<List<Long>> longListSeq = readCursorsLong(cursors, blackhole);
-    List<Long> strings = Sequences.toList(Sequences.limit(longListSeq, 1), Lists.<List<Long>>newArrayList()).get(0);
+    List<Long> strings = longListSeq.limit(1).toList().get(0);
     for (Long st : strings) {
       blackhole.consume(st);
     }
@@ -295,7 +289,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, timeFilterHalf);
 
     Sequence<List<Long>> longListSeq = readCursorsLong(cursors, blackhole);
-    List<Long> strings = Sequences.toList(Sequences.limit(longListSeq, 1), Lists.<List<Long>>newArrayList()).get(0);
+    List<Long> strings = longListSeq.limit(1).toList().get(0);
     for (Long st : strings) {
       blackhole.consume(st);
     }
@@ -310,7 +304,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, timeFilterAll);
 
     Sequence<List<Long>> longListSeq = readCursorsLong(cursors, blackhole);
-    List<Long> strings = Sequences.toList(Sequences.limit(longListSeq, 1), Lists.<List<Long>>newArrayList()).get(0);
+    List<Long> strings = longListSeq.limit(1).toList().get(0);
     for (Long st : strings) {
       blackhole.consume(st);
     }
@@ -327,7 +321,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, filter);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -344,7 +338,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, filter);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -361,7 +355,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, filter);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -378,7 +372,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, filter);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -397,7 +391,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, orFilter);
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -416,7 +410,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, Filters.convertToCNF(orFilter));
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -458,7 +452,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, dimFilter3.toFilter());
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -500,7 +494,7 @@ public class FilterPartitionBenchmark
     Sequence<Cursor> cursors = makeCursors(sa, Filters.convertToCNF(dimFilter3.toFilter()));
 
     Sequence<List<String>> stringListSeq = readCursors(cursors, blackhole);
-    List<String> strings = Sequences.toList(Sequences.limit(stringListSeq, 1), Lists.<List<String>>newArrayList()).get(0);
+    List<String> strings = stringListSeq.limit(1).toList().get(0);
     for (String st : strings) {
       blackhole.consume(st);
     }
@@ -508,7 +502,7 @@ public class FilterPartitionBenchmark
 
   private Sequence<Cursor> makeCursors(StorageAdapter sa, Filter filter)
   {
-    return sa.makeCursors(filter, schemaInfo.getDataInterval(), VirtualColumns.EMPTY, Granularities.ALL, false);
+    return sa.makeCursors(filter, schemaInfo.getDataInterval(), VirtualColumns.EMPTY, Granularities.ALL, false, null);
   }
 
   private Sequence<List<String>> readCursors(Sequence<Cursor> cursors, final Blackhole blackhole)
@@ -522,7 +516,9 @@ public class FilterPartitionBenchmark
           {
             List<String> strings = new ArrayList<String>();
             List<DimensionSelector> selectors = new ArrayList<>();
-            selectors.add(input.makeDimensionSelector(new DefaultDimensionSpec("dimSequential", null)));
+            selectors.add(
+                input.getColumnSelectorFactory().makeDimensionSelector(new DefaultDimensionSpec("dimSequential", null))
+            );
             //selectors.add(input.makeDimensionSelector(new DefaultDimensionSpec("dimB", null)));
             while (!input.isDone()) {
               for (DimensionSelector selector : selectors) {
@@ -548,9 +544,9 @@ public class FilterPartitionBenchmark
           public List<Long> apply(Cursor input)
           {
             List<Long> longvals = new ArrayList<Long>();
-            LongColumnSelector selector = input.makeLongColumnSelector("sumLongSequential");
+            BaseLongColumnValueSelector selector = input.getColumnSelectorFactory().makeColumnValueSelector("sumLongSequential");
             while (!input.isDone()) {
-              long rowval = selector.get();
+              long rowval = selector.getLong();
               blackhole.consume(rowval);
               input.advance();
             }
@@ -560,7 +556,7 @@ public class FilterPartitionBenchmark
     );
   }
 
-  private class NoBitmapSelectorFilter extends SelectorFilter
+  private static class NoBitmapSelectorFilter extends SelectorFilter
   {
     public NoBitmapSelectorFilter(
         String dimension,
@@ -577,7 +573,7 @@ public class FilterPartitionBenchmark
     }
   }
 
-  private class NoBitmapDimensionPredicateFilter extends DimensionPredicateFilter
+  private static class NoBitmapDimensionPredicateFilter extends DimensionPredicateFilter
   {
     public NoBitmapDimensionPredicateFilter(
         final String dimension,
@@ -595,7 +591,7 @@ public class FilterPartitionBenchmark
     }
   }
 
-  private class NoBitmapSelectorDimFilter extends SelectorDimFilter
+  private static class NoBitmapSelectorDimFilter extends SelectorDimFilter
   {
     public NoBitmapSelectorDimFilter(
         String dimension,
@@ -641,6 +637,12 @@ public class FilterPartitionBenchmark
           public DruidFloatPredicate makeFloatPredicate()
           {
             return DruidFloatPredicate.ALWAYS_FALSE;
+          }
+
+          @Override
+          public DruidDoublePredicate makeDoublePredicate()
+          {
+            return DruidDoublePredicate.ALWAYS_FALSE;
           }
         };
 

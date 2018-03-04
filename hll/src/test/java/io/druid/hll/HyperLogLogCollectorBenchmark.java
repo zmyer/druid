@@ -34,6 +34,9 @@ import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * TODO rewrite to use JMH and move to the benchmarks project
+ */
 public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
 {
   private final HashFunction fn = Hashing.murmur3_128();
@@ -60,7 +63,7 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
     Random rand = new Random(0);
     int defaultOffset = 0;
 
-    switch(alignment) {
+    switch (alignment) {
       case "default":
         alignSource = false;
         alignTarget = false;
@@ -81,9 +84,9 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
     );
 
     int pos = 0;
-    for(int i = 0; i < count; ++i) {
+    for (int i = 0; i < count; ++i) {
       HyperLogLogCollector c = HyperLogLogCollector.makeLatestCollector();
-      for(int k = 0; k < 40; ++k) {
+      for (int k = 0; k < 40; ++k) {
         c.add(fn.hashInt(++val).asBytes());
       }
       final ByteBuffer sparseHeapCopy = c.toByteBuffer();
@@ -91,9 +94,9 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
 
       final ByteBuffer buf;
 
-      final int offset = random ? (int)(rand.nextDouble() * 64) : defaultOffset;
+      final int offset = random ? (int) (rand.nextDouble() * 64) : defaultOffset;
 
-      if(alignSource && (pos % CACHE_LINE) != offset) {
+      if (alignSource && (pos % CACHE_LINE) != offset) {
         pos += (pos % CACHE_LINE) < offset ? offset - (pos % CACHE_LINE) : (CACHE_LINE + offset - pos % CACHE_LINE);
       }
 
@@ -118,8 +121,8 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
     final int size = HyperLogLogCollector.getLatestNumBytesForDenseStorage();
     final byte[] EMPTY_BYTES = HyperLogLogCollector.makeEmptyVersionedByteArray();
     final ByteBuffer buf;
-    if(direct) {
-      if(aligned) {
+    if (direct) {
+      if (aligned) {
         buf = ByteBuffers.allocateAlignedByteBuffer(size + offset, CACHE_LINE);
         buf.position(offset);
         buf.mark();
@@ -132,8 +135,7 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
 
       buf.put(EMPTY_BYTES);
       buf.reset();
-    }
-    else {
+    } else {
       buf = ByteBuffer.allocate(size);
       buf.limit(size);
       buf.put(EMPTY_BYTES);
@@ -142,12 +144,13 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
     return buf;
   }
 
+  @SuppressWarnings("unused") // Supposedly called by Caliper
   public double timeFold(int reps) throws Exception
   {
     final ByteBuffer buf = allocateEmptyHLLBuffer(targetIsDirect, alignTarget, 0);
 
     for (int k = 0; k < reps; ++k) {
-      for(int i = 0; i < count; ++i) {
+      for (int i = 0; i < count; ++i) {
         final int pos = positions[i];
         final int size = sizes[i];
 
@@ -165,12 +168,14 @@ public class HyperLogLogCollectorBenchmark extends SimpleBenchmark
     return HyperLogLogCollector.makeCollector(buf.duplicate()).estimateCardinality();
   }
 
-  public static void main(String[] args) throws Exception {
+  public static void main(String[] args) throws Exception
+  {
     Runner.main(HyperLogLogCollectorBenchmark.class, args);
   }
 }
 
-class ByteBuffers {
+class ByteBuffers
+{
   private static final Unsafe UNSAFE;
   private static final long ADDRESS_OFFSET;
 
@@ -180,16 +185,19 @@ class ByteBuffers {
       theUnsafe.setAccessible(true);
       UNSAFE = (Unsafe) theUnsafe.get(null);
       ADDRESS_OFFSET = UNSAFE.objectFieldOffset(Buffer.class.getDeclaredField("address"));
-    } catch (Exception e) {
+    }
+    catch (Exception e) {
       throw new RuntimeException("Cannot access Unsafe methods", e);
     }
   }
 
-  public static long getAddress(ByteBuffer buf) {
+  public static long getAddress(ByteBuffer buf)
+  {
     return UNSAFE.getLong(buf, ADDRESS_OFFSET);
   }
 
-  public static ByteBuffer allocateAlignedByteBuffer(int capacity, int align) {
+  public static ByteBuffer allocateAlignedByteBuffer(int capacity, int align)
+  {
     Preconditions.checkArgument(Long.bitCount(align) == 1, "Alignment must be a power of 2");
     final ByteBuffer buf = ByteBuffer.allocateDirect(capacity + align);
     long address = getAddress(buf);

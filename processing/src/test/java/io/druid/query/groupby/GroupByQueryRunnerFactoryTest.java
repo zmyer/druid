@@ -33,9 +33,9 @@ import io.druid.java.util.common.guava.MergeSequence;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.query.Query;
+import io.druid.query.QueryPlus;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryRunnerFactory;
-import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.dimension.DefaultDimensionSpec;
 import io.druid.query.dimension.DimensionSpec;
@@ -45,12 +45,11 @@ import io.druid.segment.IncrementalIndexSegment;
 import io.druid.segment.Segment;
 import io.druid.segment.TestHelper;
 import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.OnheapIncrementalIndex;
 import org.junit.Rule;
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -70,14 +69,7 @@ public class GroupByQueryRunnerFactoryTest
         .setQuerySegmentSpec(new LegacySegmentSpec("1970/3000"))
         .setGranularity(Granularities.ALL)
         .setDimensions(Lists.<DimensionSpec>newArrayList(new DefaultDimensionSpec("tags", "tags")))
-        .setAggregatorSpecs(
-            Arrays.asList(
-                new AggregatorFactory[]
-                    {
-                        new CountAggregatorFactory("count")
-                    }
-            )
-        )
+        .setAggregatorSpecs(Collections.singletonList(new CountAggregatorFactory("count")))
         .build();
 
     final QueryRunnerFactory factory = GroupByQueryRunnerTest.makeQueryRunnerFactory(new GroupByQueryConfig());
@@ -86,65 +78,63 @@ public class GroupByQueryRunnerFactoryTest
         new QueryRunner()
         {
           @Override
-          public Sequence run(Query query, Map responseContext)
+          public Sequence run(QueryPlus queryPlus, Map responseContext)
           {
             return factory.getToolchest().mergeResults(
                 new QueryRunner()
                 {
                   @Override
-                  public Sequence run(Query query, Map responseContext)
+                  public Sequence run(QueryPlus queryPlus, Map responseContext)
                   {
+                    final Query query = queryPlus.getQuery();
                     try {
                       return new MergeSequence(
                           query.getResultOrdering(),
                           Sequences.simple(
                               Arrays.asList(
-                                  factory.createRunner(createSegment()).run(query, responseContext),
-                                  factory.createRunner(createSegment()).run(query, responseContext)
+                                  factory.createRunner(createSegment()).run(queryPlus, responseContext),
+                                  factory.createRunner(createSegment()).run(queryPlus, responseContext)
                               )
                           )
                       );
-                    } catch (Exception e) {
+                    }
+                    catch (Exception e) {
                       Throwables.propagate(e);
                       return null;
                     }
                   }
                 }
-            ).run(query, responseContext);
+            ).run(queryPlus, responseContext);
           }
         }
     );
 
-    Sequence<Row> result = mergedRunner.run(query, Maps.newHashMap());
+    Sequence<Row> result = mergedRunner.run(QueryPlus.wrap(query), Maps.newHashMap());
 
     List<Row> expectedResults = Arrays.asList(
         GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", "t1", "count", 2L),
         GroupByQueryRunnerTestHelper.createExpectedRow("1970-01-01T00:00:00.000Z", "tags", "t2", "count", 4L)
     );
 
-    TestHelper.assertExpectedObjects(expectedResults, Sequences.toList(result, new ArrayList<Row>()), "");
+    TestHelper.assertExpectedObjects(expectedResults, result.toList(), "");
   }
 
   private Segment createSegment() throws Exception
   {
-    IncrementalIndex incrementalIndex = new OnheapIncrementalIndex(
-        0,
-        Granularities.NONE,
-        new AggregatorFactory[]{
-            new CountAggregatorFactory("count")
-        },
-        true,
-        true,
-        true,
-        5000
-    );
+    IncrementalIndex incrementalIndex = new IncrementalIndex.Builder()
+        .setSimpleTestingIndexSchema(new CountAggregatorFactory("count"))
+        .setConcurrentEventAdd(true)
+        .setMaxRowCount(5000)
+        .buildOnheap();
 
     StringInputRowParser parser = new StringInputRowParser(
         new CSVParseSpec(
             new TimestampSpec("timestamp", "iso", null),
             new DimensionsSpec(DimensionsSpec.getDefaultSchemas(ImmutableList.of("product", "tags")), null, null),
             "\t",
-            ImmutableList.of("timestamp", "product", "tags")
+            ImmutableList.of("timestamp", "product", "tags"),
+            false,
+            0
         ),
         "UTF-8"
     );

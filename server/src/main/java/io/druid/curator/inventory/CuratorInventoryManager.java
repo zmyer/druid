@@ -19,12 +19,10 @@
 
 package io.druid.curator.inventory;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Iterables;
-import com.google.common.collect.MapMaker;
 import com.google.common.collect.Sets;
-import com.google.common.io.Closer;
 import io.druid.curator.cache.PathChildrenCacheFactory;
+import io.druid.java.util.common.StringUtils;
+import io.druid.java.util.common.io.Closer;
 import io.druid.java.util.common.lifecycle.LifecycleStart;
 import io.druid.java.util.common.lifecycle.LifecycleStop;
 import io.druid.java.util.common.logger.Logger;
@@ -36,12 +34,17 @@ import org.apache.curator.framework.recipes.cache.PathChildrenCacheListener;
 import org.apache.curator.utils.ZKPaths;
 
 import java.io.IOException;
+import java.util.Collection;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
+ * This class is deprecated. Use {@link io.druid.client.HttpServerInventoryView} for segment discovery.
+ *
  * An InventoryManager watches updates to inventory on Zookeeper (or some other discovery-like service publishing
  * system).  It is built up on two object types: containers and inventory objects.
  * <p/>
@@ -51,6 +54,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * A Strategy is provided to the constructor of an Inventory manager, this strategy provides all of the
  * object-specific logic to serialize, deserialize, compose and alter the container and inventory objects.
  */
+@Deprecated
 public class CuratorInventoryManager<ContainerClass, InventoryClass>
 {
   private static final Logger log = new Logger(CuratorInventoryManager.class);
@@ -79,7 +83,7 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
     this.config = config;
     this.strategy = strategy;
 
-    this.containers = new MapMaker().makeMap();
+    this.containers = new ConcurrentHashMap<>();
     this.uninitializedInventory = Sets.newConcurrentHashSet();
 
     this.pathChildrenCacheExecutor = exec;
@@ -159,25 +163,20 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
     return containerHolder == null ? null : containerHolder.getContainer();
   }
 
-  public Iterable<ContainerClass> getInventory()
+  public Collection<ContainerClass> getInventory()
   {
-    return Iterables.transform(
-        containers.values(),
-        new Function<ContainerHolder, ContainerClass>()
-        {
-          @Override
-          public ContainerClass apply(ContainerHolder input)
-          {
-            return input.getContainer();
-          }
-        }
-    );
+    return containers.values()
+                     .stream()
+                     .map(ContainerHolder::getContainer)
+                     .collect(Collectors.toList());
   }
 
-  private byte[] getZkDataForNode(String path) {
+  private byte[] getZkDataForNode(String path)
+  {
     try {
       return curatorFramework.getData().decompressed().forPath(path);
-    } catch(Exception ex) {
+    }
+    catch (Exception ex) {
       log.warn(ex, "Exception while getting data for node %s", path);
       return null;
     }
@@ -228,7 +227,7 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
             final ChildData child = event.getData();
 
             byte[] data = getZkDataForNode(child.getPath());
-            if(data == null) {
+            if (data == null) {
               log.info("Ignoring event: Type - %s , Path - %s , Version - %s",
                   event.getType(),
                   child.getPath(),
@@ -246,7 +245,7 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
             if (containers.containsKey(containerKey)) {
               log.error("New node[%s] but there was already one.  That's not good, ignoring new one.", child.getPath());
             } else {
-              final String inventoryPath = String.format("%s/%s", config.getInventoryPath(), containerKey);
+              final String inventoryPath = StringUtils.format("%s/%s", config.getInventoryPath(), containerKey);
               PathChildrenCache inventoryCache = cacheFactory.make(curatorFramework, inventoryPath);
               inventoryCache.getListenable().addListener(new InventoryCacheListener(containerKey, inventoryPath));
 
@@ -256,9 +255,8 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
               inventoryCache.start(PathChildrenCache.StartMode.POST_INITIALIZED_EVENT);
               strategy.newContainer(container);
             }
-
-            break;
           }
+          break;
         case CHILD_REMOVED:
           synchronized (lock) {
             final ChildData child = event.getData();
@@ -281,9 +279,8 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
             synchronized (removed) {
               markInventoryInitialized(removed);
             }
-
-            break;
           }
+          break;
         case CHILD_UPDATED:
           synchronized (lock) {
             final ChildData child = event.getData();
@@ -310,9 +307,8 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
                 holder.setContainer(strategy.updateContainer(holder.getContainer(), container));
               }
             }
-
-            break;
           }
+          break;
         case INITIALIZED:
           synchronized (lock) {
             // must await initialized of all containerholders
@@ -325,8 +321,12 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
             }
             containersInitialized = true;
             maybeDoneInitializing();
-            break;
           }
+          break;
+        case CONNECTION_SUSPENDED:
+        case CONNECTION_RECONNECTED:
+        case CONNECTION_LOST:
+          // do nothing
       }
     }
 
@@ -431,7 +431,7 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
 
             break;
           }
-          case INITIALIZED:
+          case INITIALIZED: {
             // make sure to acquire locks in (lock -> holder) order
             synchronized (lock) {
               synchronized (holder) {
@@ -440,6 +440,11 @@ public class CuratorInventoryManager<ContainerClass, InventoryClass>
             }
 
             break;
+          }
+          case CONNECTION_SUSPENDED:
+          case CONNECTION_RECONNECTED:
+          case CONNECTION_LOST:
+            // do nothing
         }
       }
     }

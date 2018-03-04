@@ -19,27 +19,25 @@
 
 package io.druid.query.aggregation;
 
-import com.google.common.primitives.Floats;
-import com.google.common.primitives.Longs;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
-import io.druid.segment.FloatColumnSelector;
+import io.druid.segment.BaseFloatColumnValueSelector;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 
 public class HistogramBufferAggregator implements BufferAggregator
 {
-  private final FloatColumnSelector selector;
+  private final BaseFloatColumnValueSelector selector;
   private final float[] breaks;
   private final int minOffset;
   private final int maxOffset;
 
-  public HistogramBufferAggregator(FloatColumnSelector selector, float[] breaks)
+  public HistogramBufferAggregator(BaseFloatColumnValueSelector selector, float[] breaks)
   {
     this.selector = selector;
-    this.breaks   = breaks;
-    this.minOffset = Longs.BYTES * (breaks.length + 1);
-    this.maxOffset = this.minOffset + Floats.BYTES;
+    this.breaks = breaks;
+    this.minOffset = Long.BYTES * (breaks.length + 1);
+    this.maxOffset = this.minOffset + Float.BYTES;
   }
 
   @Override
@@ -50,28 +48,28 @@ public class HistogramBufferAggregator implements BufferAggregator
 
     final long[] bins = new long[breaks.length + 1];
     mutationBuffer.asLongBuffer().put(bins);
-    mutationBuffer.putFloat(position + minOffset, Float.MAX_VALUE);
-    mutationBuffer.putFloat(position + maxOffset, Float.MIN_VALUE);
+    mutationBuffer.putFloat(position + minOffset, Float.POSITIVE_INFINITY);
+    mutationBuffer.putFloat(position + maxOffset, Float.NEGATIVE_INFINITY);
   }
 
   @Override
   public void aggregate(ByteBuffer buf, int position)
   {
-    final float value = selector.get();
+    final float value = selector.getFloat();
     final int minPos = position + minOffset;
     final int maxPos = position + maxOffset;
 
-    if(value < buf.getFloat(minPos)) {
+    if (value < buf.getFloat(minPos)) {
       buf.putFloat(minPos, value);
     }
-    if(value > buf.getFloat(maxPos)) {
+    if (value > buf.getFloat(maxPos)) {
       buf.putFloat(maxPos, value);
     }
 
     int index = Arrays.binarySearch(breaks, value);
     index = (index >= 0) ? index : -(index + 1);
 
-    final int offset = position + (index * Longs.BYTES);
+    final int offset = position + (index * Long.BYTES);
     final long count = buf.getLong(offset);
     buf.putLong(offset, count + 1);
   }
@@ -99,6 +97,12 @@ public class HistogramBufferAggregator implements BufferAggregator
   public long getLong(ByteBuffer buf, int position)
   {
     throw new UnsupportedOperationException("HistogramBufferAggregator does not support getLong()");
+  }
+
+  @Override
+  public double getDouble(ByteBuffer buf, int position)
+  {
+    throw new UnsupportedOperationException("HistogramBufferAggregator does not support getDouble");
   }
 
   @Override

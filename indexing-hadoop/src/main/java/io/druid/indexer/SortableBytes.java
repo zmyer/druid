@@ -19,12 +19,11 @@
 
 package io.druid.indexer;
 
+import io.druid.java.util.common.StringUtils;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.WritableComparator;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Partitioner;
-
-import io.druid.java.util.common.StringUtils;
 
 import java.nio.ByteBuffer;
 import java.util.Arrays;
@@ -76,11 +75,6 @@ public class SortableBytes
            "groupKey='" + StringUtils.fromUtf8(groupKey) + '\'' +
            ", sortKey='" + StringUtils.fromUtf8(sortKey) + '\'' +
            '}';
-  }
-
-  public static SortableBytes fromBytes(byte[] bytes)
-  {
-    return fromBytes(bytes, 0, bytes.length);
   }
 
   public static SortableBytes fromBytesWritable(BytesWritable bytes)

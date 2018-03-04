@@ -34,6 +34,7 @@ final class PredicateFilteredDimensionSelector implements DimensionSelector
 {
   private final DimensionSelector selector;
   private final Predicate<String> predicate;
+  private final ArrayBasedIndexedInts row = new ArrayBasedIndexedInts();
 
   PredicateFilteredDimensionSelector(DimensionSelector selector, Predicate<String> predicate)
   {
@@ -46,14 +47,16 @@ final class PredicateFilteredDimensionSelector implements DimensionSelector
   {
     IndexedInts baseRow = selector.getRow();
     int baseRowSize = baseRow.size();
-    int[] result = new int[baseRowSize];
+    row.ensureSize(baseRowSize);
     int resultSize = 0;
     for (int i = 0; i < baseRowSize; i++) {
       if (predicate.apply(selector.lookupName(baseRow.get(i)))) {
-        result[resultSize++] = i;
+        row.setValue(resultSize, i);
+        resultSize++;
       }
     }
-    return ArrayBasedIndexedInts.of(result, resultSize);
+    row.setSize(resultSize);
+    return row;
   }
 
   @Override
@@ -78,6 +81,13 @@ final class PredicateFilteredDimensionSelector implements DimensionSelector
         }
         // null should match empty rows in multi-value columns
         return nullRow && value == null;
+      }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        // PredicateFilteredDimensionSelector.this inspects selector and predicate as well.
+        inspector.visit("selector", PredicateFilteredDimensionSelector.this);
       }
     };
   }
@@ -106,6 +116,14 @@ final class PredicateFilteredDimensionSelector implements DimensionSelector
         // null should match empty rows in multi-value columns
         return nullRow && matchNull;
       }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        // PredicateFilteredDimensionSelector.this inspects selector and predicate as well.
+        inspector.visit("selector", PredicateFilteredDimensionSelector.this);
+        inspector.visit("matcherPredicate", matcherPredicate);
+      }
     };
   }
 
@@ -132,6 +150,19 @@ final class PredicateFilteredDimensionSelector implements DimensionSelector
   public IdLookup idLookup()
   {
     return selector.idLookup();
+  }
+
+  @Nullable
+  @Override
+  public Object getObject()
+  {
+    return defaultGetObject();
+  }
+
+  @Override
+  public Class classOfObject()
+  {
+    return Object.class;
   }
 
   @Override

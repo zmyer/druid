@@ -29,14 +29,15 @@ import io.druid.java.util.common.logger.Logger;
 
 public class JettyRequestLog extends AbstractLifeCycle implements RequestLog
 {
-  private final static Logger logger = new Logger("io.druid.jetty.RequestLog");
+  private static final Logger logger = new Logger("io.druid.jetty.RequestLog");
 
   @Override
   public void log(Request request, Response response)
   {
     if (logger.isDebugEnabled()) {
       logger.debug(
-          "%s %s %s",
+          "%s %s %s %s",
+          request.getRemoteAddr(),
           request.getMethod(),
           request.getHttpURI().toString(),
           request.getProtocol()

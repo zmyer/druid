@@ -20,6 +20,7 @@
 package io.druid.segment;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.primitives.Doubles;
 import com.google.common.primitives.Floats;
 import io.druid.common.guava.GuavaUtils;
 import io.druid.data.input.impl.DimensionSchema.MultiValueHandling;
@@ -40,9 +41,16 @@ import java.util.List;
 
 public final class DimensionHandlerUtils
 {
+
+  // use these values to ensure that convertObjectToLong(), convertObjectToDouble() and convertObjectToFloat()
+  // return the same boxed object when returning a constant zero.
+  public static final Double ZERO_DOUBLE = 0.0d;
+  public static final Float ZERO_FLOAT = 0.0f;
+  public static final Long ZERO_LONG = 0L;
+
   private DimensionHandlerUtils() {}
 
-  public final static ColumnCapabilities DEFAULT_STRING_CAPABILITIES =
+  public static final ColumnCapabilities DEFAULT_STRING_CAPABILITIES =
       new ColumnCapabilitiesImpl().setType(ValueType.STRING)
                                   .setDictionaryEncoded(true)
                                   .setHasBitmapIndexes(true);
@@ -54,16 +62,16 @@ public final class DimensionHandlerUtils
   )
   {
     if (capabilities == null) {
-      return new StringDimensionHandler(dimensionName, multiValueHandling);
+      return new StringDimensionHandler(dimensionName, multiValueHandling, true);
     }
 
     multiValueHandling = multiValueHandling == null ? MultiValueHandling.ofDefault() : multiValueHandling;
 
     if (capabilities.getType() == ValueType.STRING) {
-      if (!capabilities.isDictionaryEncoded() || !capabilities.hasBitmapIndexes()) {
-        throw new IAE("String column must have dictionary encoding and bitmap index.");
+      if (!capabilities.isDictionaryEncoded()) {
+        throw new IAE("String column must have dictionary encoding.");
       }
-      return new StringDimensionHandler(dimensionName, multiValueHandling);
+      return new StringDimensionHandler(dimensionName, multiValueHandling, capabilities.hasBitmapIndexes());
     }
 
     if (capabilities.getType() == ValueType.LONG) {
@@ -74,8 +82,12 @@ public final class DimensionHandlerUtils
       return new FloatDimensionHandler(dimensionName);
     }
 
+    if (capabilities.getType() == ValueType.DOUBLE) {
+      return new DoubleDimensionHandler(dimensionName);
+    }
+
     // Return a StringDimensionHandler by default (null columns will be treated as String typed)
-    return new StringDimensionHandler(dimensionName, multiValueHandling);
+    return new StringDimensionHandler(dimensionName, multiValueHandling, true);
   }
 
   public static List<ValueType> getValueTypesFromDimensionSpecs(List<DimensionSpec> dimSpecs)
@@ -122,13 +134,16 @@ public final class DimensionHandlerUtils
    * @param <ColumnSelectorStrategyClass> The strategy type created by the provided strategy factory.
    * @param strategyFactory A factory provided by query engines that generates type-handling strategies
    * @param dimensionSpecs The set of columns to generate ColumnSelectorPlus objects for
-   * @param cursor Used to create value selectors for columns.
+   * @param columnSelectorFactory Used to create value selectors for columns.
    * @return An array of ColumnSelectorPlus objects, in the order of the columns specified in dimensionSpecs
    */
-  public static <ColumnSelectorStrategyClass extends ColumnSelectorStrategy> ColumnSelectorPlus<ColumnSelectorStrategyClass>[] createColumnSelectorPluses(
+  public static <ColumnSelectorStrategyClass extends ColumnSelectorStrategy>
+  //CHECKSTYLE.OFF: Indentation
+  ColumnSelectorPlus<ColumnSelectorStrategyClass>[] createColumnSelectorPluses(
+      //CHECKSTYLE.ON: Indentation
       ColumnSelectorStrategyFactory<ColumnSelectorStrategyClass> strategyFactory,
       List<DimensionSpec> dimensionSpecs,
-      ColumnSelectorFactory cursor
+      ColumnSelectorFactory columnSelectorFactory
   )
   {
     int dimCount = dimensionSpecs.size();
@@ -138,12 +153,12 @@ public final class DimensionHandlerUtils
       final String dimName = dimSpec.getDimension();
       final ColumnValueSelector selector = getColumnValueSelectorFromDimensionSpec(
           dimSpec,
-          cursor
+          columnSelectorFactory
       );
       ColumnSelectorStrategyClass strategy = makeStrategy(
           strategyFactory,
           dimSpec,
-          cursor.getColumnCapabilities(dimSpec.getDimension()),
+          columnSelectorFactory.getColumnCapabilities(dimSpec.getDimension()),
           selector
       );
       final ColumnSelectorPlus<ColumnSelectorStrategyClass> selectorPlus = new ColumnSelectorPlus<>(
@@ -169,9 +184,9 @@ public final class DimensionHandlerUtils
       case STRING:
         return columnSelectorFactory.makeDimensionSelector(dimSpec);
       case LONG:
-        return columnSelectorFactory.makeLongColumnSelector(dimSpec.getDimension());
       case FLOAT:
-        return columnSelectorFactory.makeFloatColumnSelector(dimSpec.getDimension());
+      case DOUBLE:
+        return columnSelectorFactory.makeColumnValueSelector(dimSpec.getDimension());
       default:
         return null;
     }
@@ -202,7 +217,7 @@ public final class DimensionHandlerUtils
 
     // DimensionSpec's decorate only operates on DimensionSelectors, so if a spec mustDecorate(),
     // we need to wrap selectors on numeric columns with a string casting DimensionSelector.
-    if (capabilities.getType() == ValueType.LONG || capabilities.getType() == ValueType.FLOAT) {
+    if (ValueType.isNumeric(capabilities.getType())) {
       if (dimSpec.mustDecorate()) {
         capabilities = DEFAULT_STRING_CAPABILITIES;
       }
@@ -222,10 +237,17 @@ public final class DimensionHandlerUtils
     return strategyFactory.makeColumnSelectorStrategy(capabilities, selector);
   }
 
-  public static Long convertObjectToLong(Object valObj)
+  @Nullable
+  public static Long convertObjectToLong(@Nullable Object valObj)
+  {
+    return convertObjectToLong(valObj, false);
+  }
+
+  @Nullable
+  public static Long convertObjectToLong(@Nullable Object valObj, boolean reportParseExceptions)
   {
     if (valObj == null) {
-      return 0L;
+      return null;
     }
 
     if (valObj instanceof Long) {
@@ -233,16 +255,27 @@ public final class DimensionHandlerUtils
     } else if (valObj instanceof Number) {
       return ((Number) valObj).longValue();
     } else if (valObj instanceof String) {
-      return DimensionHandlerUtils.getExactLongFromDecimalString((String) valObj);
+      Long ret = DimensionHandlerUtils.getExactLongFromDecimalString((String) valObj);
+      if (reportParseExceptions && ret == null) {
+        throw new ParseException("could not convert value [%s] to long", valObj);
+      }
+      return ret;
     } else {
       throw new ParseException("Unknown type[%s]", valObj.getClass());
     }
   }
 
-  public static Float convertObjectToFloat(Object valObj)
+  @Nullable
+  public static Float convertObjectToFloat(@Nullable Object valObj)
+  {
+    return convertObjectToFloat(valObj, false);
+  }
+
+  @Nullable
+  public static Float convertObjectToFloat(@Nullable Object valObj, boolean reportParseExceptions)
   {
     if (valObj == null) {
-      return 0.0f;
+      return null;
     }
 
     if (valObj instanceof Float) {
@@ -250,7 +283,39 @@ public final class DimensionHandlerUtils
     } else if (valObj instanceof Number) {
       return ((Number) valObj).floatValue();
     } else if (valObj instanceof String) {
-      return Floats.tryParse((String) valObj);
+      Float ret = Floats.tryParse((String) valObj);
+      if (reportParseExceptions && ret == null) {
+        throw new ParseException("could not convert value [%s] to float", valObj);
+      }
+      return ret;
+    } else {
+      throw new ParseException("Unknown type[%s]", valObj.getClass());
+    }
+  }
+
+  @Nullable
+  public static Double convertObjectToDouble(@Nullable Object valObj)
+  {
+    return convertObjectToDouble(valObj, false);
+  }
+
+  @Nullable
+  public static Double convertObjectToDouble(@Nullable Object valObj, boolean reportParseExceptions)
+  {
+    if (valObj == null) {
+      return null;
+    }
+
+    if (valObj instanceof Double) {
+      return (Double) valObj;
+    } else if (valObj instanceof Number) {
+      return ((Number) valObj).doubleValue();
+    } else if (valObj instanceof String) {
+      Double ret = Doubles.tryParse((String) valObj);
+      if (reportParseExceptions && ret == null) {
+        throw new ParseException("could not convert value [%s] to double", valObj);
+      }
+      return ret;
     } else {
       throw new ParseException("Unknown type[%s]", valObj.getClass());
     }
@@ -290,5 +355,25 @@ public final class DimensionHandlerUtils
       // indicates there was a non-integral part, or the BigDecimal was too big for a long
       return null;
     }
+  }
+
+  public static Double nullToZero(@Nullable Double number)
+  {
+    return number == null ? ZERO_DOUBLE : number;
+  }
+
+  public static Long nullToZero(@Nullable Long number)
+  {
+    return number == null ? ZERO_LONG : number;
+  }
+
+  public static Float nullToZero(@Nullable Float number)
+  {
+    return number == null ? ZERO_FLOAT : number;
+  }
+
+  public static Number nullToZero(@Nullable Number number)
+  {
+    return number == null ? ZERO_DOUBLE : number;
   }
 }

@@ -21,19 +21,18 @@ package io.druid.segment.realtime.appenderator;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.ImmutableMap;
-import com.metamx.common.logger.Logger;
-import com.metamx.emitter.EmittingLogger;
-import com.metamx.emitter.core.LoggingEmitter;
-import com.metamx.emitter.service.ServiceEmitter;
 import io.druid.client.cache.CacheConfig;
 import io.druid.client.cache.MapCache;
-import io.druid.concurrent.Execs;
 import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.JSONParseSpec;
 import io.druid.data.input.impl.MapInputRowParser;
 import io.druid.data.input.impl.TimestampSpec;
 import io.druid.jackson.DefaultObjectMapper;
+import io.druid.java.util.common.concurrent.Execs;
 import io.druid.java.util.common.granularity.Granularities;
+import io.druid.java.util.emitter.EmittingLogger;
+import io.druid.java.util.emitter.core.NoopEmitter;
+import io.druid.java.util.emitter.service.ServiceEmitter;
 import io.druid.query.DefaultQueryRunnerFactoryConglomerate;
 import io.druid.query.IntervalChunkingQueryRunnerDecorator;
 import io.druid.query.Query;
@@ -48,12 +47,14 @@ import io.druid.query.timeseries.TimeseriesQueryQueryToolChest;
 import io.druid.query.timeseries.TimeseriesQueryRunnerFactory;
 import io.druid.segment.IndexIO;
 import io.druid.segment.IndexMerger;
+import io.druid.segment.IndexMergerV9;
 import io.druid.segment.column.ColumnConfig;
 import io.druid.segment.indexing.DataSchema;
 import io.druid.segment.indexing.RealtimeTuningConfig;
 import io.druid.segment.indexing.granularity.UniformGranularitySpec;
 import io.druid.segment.loading.DataSegmentPusher;
 import io.druid.segment.realtime.FireDepartmentMetrics;
+import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
 import io.druid.server.coordination.DataSegmentAnnouncer;
 import io.druid.timeline.DataSegment;
 import io.druid.timeline.partition.LinearShardSpec;
@@ -61,6 +62,7 @@ import org.apache.commons.io.FileUtils;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URI;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -87,12 +89,21 @@ public class AppenderatorTester implements AutoCloseable
       final int maxRowsInMemory
   )
   {
-    this(maxRowsInMemory, null);
+    this(maxRowsInMemory, null, false);
   }
 
   public AppenderatorTester(
       final int maxRowsInMemory,
-      final File basePersistDirectory
+      final boolean enablePushFailure
+  )
+  {
+    this(maxRowsInMemory, null, enablePushFailure);
+  }
+
+  public AppenderatorTester(
+      final int maxRowsInMemory,
+      final File basePersistDirectory,
+      final boolean enablePushFailure
   )
   {
     objectMapper = new DefaultObjectMapper();
@@ -117,6 +128,7 @@ public class AppenderatorTester implements AutoCloseable
             new LongSumAggregatorFactory("met", "met")
         },
         new UniformGranularitySpec(Granularities.MINUTE, Granularities.NONE, null),
+        null,
         objectMapper
     );
 
@@ -135,6 +147,7 @@ public class AppenderatorTester implements AutoCloseable
         0,
         null,
         null,
+        null,
         null
     );
 
@@ -143,6 +156,7 @@ public class AppenderatorTester implements AutoCloseable
 
     indexIO = new IndexIO(
         objectMapper,
+        OffHeapMemorySegmentWriteOutMediumFactory.instance(),
         new ColumnConfig()
         {
           @Override
@@ -152,21 +166,19 @@ public class AppenderatorTester implements AutoCloseable
           }
         }
     );
-    indexMerger = new IndexMerger(objectMapper, indexIO);
+    indexMerger = new IndexMergerV9(objectMapper, indexIO, OffHeapMemorySegmentWriteOutMediumFactory.instance());
 
     emitter = new ServiceEmitter(
         "test",
         "test",
-        new LoggingEmitter(
-            new Logger(AppenderatorTester.class),
-            LoggingEmitter.Level.INFO,
-            objectMapper
-        )
+        new NoopEmitter()
     );
     emitter.start();
     EmittingLogger.registerEmitter(emitter);
     dataSegmentPusher = new DataSegmentPusher()
     {
+      private boolean mustFail = true;
+
       @Deprecated
       @Override
       public String getPathForHadoop(String dataSource)
@@ -181,10 +193,22 @@ public class AppenderatorTester implements AutoCloseable
       }
 
       @Override
-      public DataSegment push(File file, DataSegment segment) throws IOException
+      public DataSegment push(File file, DataSegment segment, boolean replaceExisting) throws IOException
       {
+        if (enablePushFailure && mustFail) {
+          mustFail = false;
+          throw new IOException("Push failure test");
+        } else if (enablePushFailure) {
+          mustFail = true;
+        }
         pushedSegments.add(segment);
         return segment;
+      }
+
+      @Override
+      public Map<String, Object> makeLoadSpec(URI uri)
+      {
+        throw new UnsupportedOperationException();
       }
     };
     appenderator = Appenderators.createRealtime(
@@ -234,12 +258,6 @@ public class AppenderatorTester implements AutoCloseable
           public void unannounceSegments(Iterable<DataSegment> segments) throws IOException
           {
 
-          }
-
-          @Override
-          public boolean isAnnounced(DataSegment segment)
-          {
-            return false;
           }
         },
         emitter,

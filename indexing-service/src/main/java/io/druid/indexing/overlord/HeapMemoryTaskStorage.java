@@ -24,24 +24,26 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.Ordering;
 import com.google.inject.Inject;
-
 import io.druid.indexing.common.TaskLock;
 import io.druid.indexing.common.TaskStatus;
 import io.druid.indexing.common.actions.TaskAction;
 import io.druid.indexing.common.config.TaskStorageConfig;
 import io.druid.indexing.common.task.Task;
+import io.druid.java.util.common.DateTimes;
+import io.druid.java.util.common.Pair;
 import io.druid.java.util.common.logger.Logger;
 import io.druid.metadata.EntryExistsException;
 import org.joda.time.DateTime;
 
+import javax.annotation.Nullable;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.locks.ReentrantLock;
+import java.util.stream.Collectors;
 
 /**
  * Implements an in-heap TaskStorage facility, with no persistence across restarts. This class is not
@@ -79,13 +81,14 @@ public class HeapMemoryTaskStorage implements TaskStorage
           status.getId()
       );
 
-      if(tasks.containsKey(task.getId())) {
+      if (tasks.containsKey(task.getId())) {
         throw new EntryExistsException(task.getId());
       }
 
       log.info("Inserting task %s with status: %s", task.getId(), status);
-      tasks.put(task.getId(), new TaskStuff(task, status, new DateTime()));
-    } finally {
+      tasks.put(task.getId(), new TaskStuff(task, status, DateTimes.nowUtc(), task.getDataSource()));
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -97,12 +100,13 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       Preconditions.checkNotNull(taskid, "taskid");
-      if(tasks.containsKey(taskid)) {
+      if (tasks.containsKey(taskid)) {
         return Optional.of(tasks.get(taskid).getTask());
       } else {
         return Optional.absent();
       }
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -120,7 +124,8 @@ public class HeapMemoryTaskStorage implements TaskStorage
       Preconditions.checkState(tasks.get(taskid).getStatus().isRunnable(), "Task status must be runnable: %s", taskid);
       log.info("Updating task %s to status: %s", taskid, status);
       tasks.put(taskid, tasks.get(taskid).withStatus(status));
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -132,12 +137,13 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       Preconditions.checkNotNull(taskid, "taskid");
-      if(tasks.containsKey(taskid)) {
+      if (tasks.containsKey(taskid)) {
         return Optional.of(tasks.get(taskid).getStatus());
       } else {
         return Optional.absent();
       }
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -149,25 +155,24 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       final ImmutableList.Builder<Task> listBuilder = ImmutableList.builder();
-      for(final TaskStuff taskStuff : tasks.values()) {
-        if(taskStuff.getStatus().isRunnable()) {
+      for (final TaskStuff taskStuff : tasks.values()) {
+        if (taskStuff.getStatus().isRunnable()) {
           listBuilder.add(taskStuff.getTask());
         }
       }
       return listBuilder.build();
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
 
   @Override
-  public List<TaskStatus> getRecentlyFinishedTaskStatuses()
+  public List<TaskStatus> getRecentlyFinishedTaskStatuses(@Nullable Integer maxTaskStatuses)
   {
     giant.lock();
 
     try {
-      final List<TaskStatus> returns = Lists.newArrayList();
-      final long recent = System.currentTimeMillis() - config.getRecentlyFinishedThreshold().getMillis();
       final Ordering<TaskStuff> createdDateDesc = new Ordering<TaskStuff>()
       {
         @Override
@@ -176,13 +181,63 @@ public class HeapMemoryTaskStorage implements TaskStorage
           return a.getCreatedDate().compareTo(b.getCreatedDate());
         }
       }.reverse();
-      for(final TaskStuff taskStuff : createdDateDesc.sortedCopy(tasks.values())) {
-        if(taskStuff.getStatus().isComplete() && taskStuff.getCreatedDate().getMillis() > recent) {
-          returns.add(taskStuff.getStatus());
-        }
-      }
-      return returns;
-    } finally {
+
+      return maxTaskStatuses == null ?
+             getRecentlyFinishedTaskStatusesSince(
+                 System.currentTimeMillis() - config.getRecentlyFinishedThreshold().getMillis(),
+                 createdDateDesc
+             ) :
+             getNRecentlyFinishedTaskStatuses(maxTaskStatuses, createdDateDesc);
+    }
+    finally {
+      giant.unlock();
+    }
+  }
+
+  private List<TaskStatus> getRecentlyFinishedTaskStatusesSince(long start, Ordering<TaskStuff> createdDateDesc)
+  {
+    giant.lock();
+
+    try {
+      return createdDateDesc
+          .sortedCopy(tasks.values())
+          .stream()
+          .filter(taskStuff -> taskStuff.getStatus().isComplete() && taskStuff.getCreatedDate().getMillis() > start)
+          .map(TaskStuff::getStatus)
+          .collect(Collectors.toList());
+    }
+    finally {
+      giant.unlock();
+    }
+  }
+
+  private List<TaskStatus> getNRecentlyFinishedTaskStatuses(int n, Ordering<TaskStuff> createdDateDesc)
+  {
+    giant.lock();
+
+    try {
+      return createdDateDesc.sortedCopy(tasks.values())
+                            .stream()
+                            .limit(n)
+                            .map(TaskStuff::getStatus)
+                            .collect(Collectors.toList());
+    }
+    finally {
+      giant.unlock();
+    }
+  }
+
+  @Nullable
+  @Override
+  public Pair<DateTime, String> getCreatedDateTimeAndDataSource(String taskId)
+  {
+    giant.lock();
+
+    try {
+      final TaskStuff taskStuff = tasks.get(taskId);
+      return taskStuff == null ? null : Pair.of(taskStuff.getCreatedDate(), taskStuff.getDataSource());
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -193,9 +248,32 @@ public class HeapMemoryTaskStorage implements TaskStorage
     giant.lock();
 
     try {
+      Preconditions.checkNotNull(taskid, "taskid");
       Preconditions.checkNotNull(taskLock, "taskLock");
       taskLocks.put(taskid, taskLock);
-    } finally {
+    }
+    finally {
+      giant.unlock();
+    }
+  }
+
+  @Override
+  public void replaceLock(String taskid, TaskLock oldLock, TaskLock newLock)
+  {
+    giant.lock();
+
+    try {
+      Preconditions.checkNotNull(taskid, "taskid");
+      Preconditions.checkNotNull(oldLock, "oldLock");
+      Preconditions.checkNotNull(newLock, "newLock");
+
+      if (!taskLocks.remove(taskid, oldLock)) {
+        log.warn("taskLock[%s] for replacement is not found for task[%s]", oldLock, taskid);
+      }
+
+      taskLocks.put(taskid, newLock);
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -208,7 +286,8 @@ public class HeapMemoryTaskStorage implements TaskStorage
     try {
       Preconditions.checkNotNull(taskLock, "taskLock");
       taskLocks.remove(taskid, taskLock);
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -220,7 +299,8 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       return ImmutableList.copyOf(taskLocks.get(taskid));
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -232,7 +312,8 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       taskActions.put(task.getId(), taskAction);
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -244,7 +325,8 @@ public class HeapMemoryTaskStorage implements TaskStorage
 
     try {
       return ImmutableList.copyOf(taskActions.get(taskid));
-    } finally {
+    }
+    finally {
       giant.unlock();
     }
   }
@@ -254,16 +336,16 @@ public class HeapMemoryTaskStorage implements TaskStorage
     final Task task;
     final TaskStatus status;
     final DateTime createdDate;
+    final String dataSource;
 
-    private TaskStuff(Task task, TaskStatus status, DateTime createdDate)
+    private TaskStuff(Task task, TaskStatus status, DateTime createdDate, String dataSource)
     {
-      Preconditions.checkNotNull(task);
-      Preconditions.checkNotNull(status);
       Preconditions.checkArgument(task.getId().equals(status.getId()));
 
-      this.task = task;
-      this.status = status;
+      this.task = Preconditions.checkNotNull(task, "task");
+      this.status = Preconditions.checkNotNull(status, "status");
       this.createdDate = Preconditions.checkNotNull(createdDate, "createdDate");
+      this.dataSource = Preconditions.checkNotNull(dataSource, "dataSource");
     }
 
     public Task getTask()
@@ -281,9 +363,14 @@ public class HeapMemoryTaskStorage implements TaskStorage
       return createdDate;
     }
 
+    public String getDataSource()
+    {
+      return dataSource;
+    }
+
     private TaskStuff withStatus(TaskStatus _status)
     {
-      return new TaskStuff(task, _status, createdDate);
+      return new TaskStuff(task, _status, createdDate, dataSource);
     }
   }
 }

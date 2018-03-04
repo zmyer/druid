@@ -38,11 +38,9 @@ import io.druid.java.util.common.guava.Comparators;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.nary.BinaryFn;
 import io.druid.query.CacheStrategy;
-import io.druid.query.DefaultGenericQueryMetricsFactory;
-import io.druid.query.GenericQueryMetricsFactory;
 import io.druid.query.IntervalChunkingQueryRunnerDecorator;
 import io.druid.query.Query;
-import io.druid.query.QueryMetrics;
+import io.druid.query.QueryPlus;
 import io.druid.query.QueryRunner;
 import io.druid.query.QueryToolChest;
 import io.druid.query.Result;
@@ -81,8 +79,7 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
 
   private final ObjectMapper jsonMapper;
   private final IntervalChunkingQueryRunnerDecorator intervalChunkingQueryRunnerDecorator;
-  private final Supplier<SelectQueryConfig> configSupplier;
-  private final GenericQueryMetricsFactory queryMetricsFactory;
+  private final SelectQueryMetricsFactory queryMetricsFactory;
 
   public SelectQueryQueryToolChest(
       ObjectMapper jsonMapper,
@@ -90,7 +87,7 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
       Supplier<SelectQueryConfig> configSupplier
   )
   {
-    this(jsonMapper, intervalChunkingQueryRunnerDecorator, configSupplier, new DefaultGenericQueryMetricsFactory(jsonMapper));
+    this(jsonMapper, intervalChunkingQueryRunnerDecorator, configSupplier, DefaultSelectQueryMetricsFactory.instance());
   }
 
   @Inject
@@ -98,12 +95,11 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
       ObjectMapper jsonMapper,
       IntervalChunkingQueryRunnerDecorator intervalChunkingQueryRunnerDecorator,
       Supplier<SelectQueryConfig> configSupplier,
-      GenericQueryMetricsFactory queryMetricsFactory
+      SelectQueryMetricsFactory queryMetricsFactory
   )
   {
     this.jsonMapper = jsonMapper;
     this.intervalChunkingQueryRunnerDecorator = intervalChunkingQueryRunnerDecorator;
-    this.configSupplier = configSupplier;
     this.queryMetricsFactory = queryMetricsFactory;
   }
 
@@ -138,9 +134,11 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
   }
 
   @Override
-  public QueryMetrics<Query<?>> makeMetrics(SelectQuery query)
+  public SelectQueryMetrics makeMetrics(SelectQuery query)
   {
-    return queryMetricsFactory.makeMetrics(query);
+    SelectQueryMetrics queryMetrics = queryMetricsFactory.makeMetrics(query);
+    queryMetrics.query(query);
+    return queryMetrics;
   }
 
   @Override
@@ -166,17 +164,7 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
       private final List<DimensionSpec> dimensionSpecs =
           query.getDimensions() != null ? query.getDimensions() : Collections.<DimensionSpec>emptyList();
       private final List<String> dimOutputNames = dimensionSpecs.size() > 0 ?
-          Lists.transform(
-              dimensionSpecs,
-              new Function<DimensionSpec, String>() {
-                @Override
-                public String apply(DimensionSpec input) {
-                  return input.getOutputName();
-                }
-              }
-          )
-          :
-          Collections.<String>emptyList();
+          Lists.transform(dimensionSpecs, DimensionSpec::getOutputName) : Collections.emptyList();
 
       @Override
       public boolean isCacheable(SelectQuery query, boolean willMergeRunners)
@@ -217,9 +205,11 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
         }
 
         final byte[] virtualColumnsCacheKey = query.getVirtualColumns().getCacheKey();
+        final byte isDescendingByte = query.isDescending() ? (byte) 1 : 0;
+
         final ByteBuffer queryCacheKey = ByteBuffer
             .allocate(
-                1
+                2
                 + granularityBytes.length
                 + filterBytes.length
                 + query.getPagingSpec().getCacheKey().length
@@ -230,7 +220,8 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
             .put(SELECT_QUERY)
             .put(granularityBytes)
             .put(filterBytes)
-            .put(query.getPagingSpec().getCacheKey());
+            .put(query.getPagingSpec().getCacheKey())
+            .put(isDescendingByte);
 
         for (byte[] dimensionsByte : dimensionsBytes) {
           queryCacheKey.put(dimensionsByte);
@@ -315,7 +306,7 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
               for (int idx = 0; idx < dimOutputNames.size(); idx++) {
                 if (!cachedOutputNames.get(idx).equals(dimOutputNames.get(idx))) {
                   // rename outputName in the EventHolder
-                  for (EventHolder eventHolder: eventHolders) {
+                  for (EventHolder eventHolder : eventHolders) {
                     Object obj = eventHolder.getEvent().remove(cachedOutputNames.get(idx));
                     if (obj != null) {
                       eventHolder.getEvent().put(dimOutputNames.get(idx), obj);
@@ -348,14 +339,15 @@ public class SelectQueryQueryToolChest extends QueryToolChest<Result<SelectResul
         {
           @Override
           public Sequence<Result<SelectResultValue>> run(
-              Query<Result<SelectResultValue>> query, Map<String, Object> responseContext
+              QueryPlus<Result<SelectResultValue>> queryPlus, Map<String, Object> responseContext
           )
           {
-            SelectQuery selectQuery = (SelectQuery) query;
+            SelectQuery selectQuery = (SelectQuery) queryPlus.getQuery();
             if (selectQuery.getDimensionsFilter() != null) {
               selectQuery = selectQuery.withDimFilter(selectQuery.getDimensionsFilter().optimize());
+              queryPlus = queryPlus.withQuery(selectQuery);
             }
-            return runner.run(selectQuery, responseContext);
+            return runner.run(queryPlus, responseContext);
           }
         }, this);
   }

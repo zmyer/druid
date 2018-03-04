@@ -37,18 +37,25 @@ public class DefaultTimeseriesQueryMetrics extends DefaultQueryMetrics<Timeserie
     super.query(query);
     numMetrics(query);
     numComplexMetrics(query);
+    granularity(query);
   }
 
   @Override
   public void numMetrics(TimeseriesQuery query)
   {
-    builder.setDimension("numMetrics", String.valueOf(query.getAggregatorSpecs().size()));
+    setDimension("numMetrics", String.valueOf(query.getAggregatorSpecs().size()));
   }
 
   @Override
   public void numComplexMetrics(TimeseriesQuery query)
   {
     int numComplexAggs = DruidMetrics.findNumComplexAggs(query.getAggregatorSpecs());
-    builder.setDimension("numComplexMetrics", String.valueOf(numComplexAggs));
+    setDimension("numComplexMetrics", String.valueOf(numComplexAggs));
+  }
+
+  @Override
+  public void granularity(TimeseriesQuery query)
+  {
+    // Don't emit by default
   }
 }

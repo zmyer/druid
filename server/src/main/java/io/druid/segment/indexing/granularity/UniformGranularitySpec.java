@@ -97,7 +97,11 @@ public class UniformGranularitySpec implements GranularitySpec
   @Override
   public Optional<Interval> bucketInterval(DateTime dt)
   {
-    return wrappedSpec.bucketInterval(dt);
+    if (wrappedSpec == null) {
+      return Optional.absent();
+    } else {
+      return wrappedSpec.bucketInterval(dt);
+    }
   }
 
   @Override
@@ -179,7 +183,9 @@ public class UniformGranularitySpec implements GranularitySpec
            '}';
   }
 
-  public GranularitySpec withIntervals(List<Interval> inputIntervals) {
+  @Override
+  public GranularitySpec withIntervals(List<Interval> inputIntervals)
+  {
     return new UniformGranularitySpec(segmentGranularity, queryGranularity, rollup, inputIntervals);
   }
 }

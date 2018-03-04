@@ -24,13 +24,16 @@ import io.druid.curator.PotentiallyGzippedCompressionProvider;
 import io.druid.indexing.overlord.config.RemoteTaskRunnerConfig;
 import io.druid.indexing.worker.Worker;
 import io.druid.indexing.worker.WorkerCuratorCoordinator;
+import io.druid.indexing.worker.WorkerTaskMonitor;
 import io.druid.jackson.DefaultObjectMapper;
+import io.druid.java.util.common.StringUtils;
 import io.druid.server.initialization.IndexerZkConfig;
 import io.druid.server.initialization.ZkPathsConfig;
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.CuratorFrameworkFactory;
 import org.apache.curator.retry.ExponentialBackoffRetry;
 import org.apache.curator.test.TestingCluster;
+import org.easymock.EasyMock;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,7 +47,7 @@ public class WorkerResourceTest
 {
   private static final ObjectMapper jsonMapper = new DefaultObjectMapper();
   private static final String basePath = "/test/druid";
-  private static final String announcementsPath = String.format("%s/indexer/announcements/host", basePath);
+  private static final String announcementsPath = StringUtils.format("%s/indexer/announcements/host", basePath);
 
   private TestingCluster testingCluster;
   private CuratorFramework cf;
@@ -70,6 +73,7 @@ public class WorkerResourceTest
     cf.create().creatingParentsIfNeeded().forPath(basePath);
 
     worker = new Worker(
+        "http",
         "host",
         "ip",
         3,
@@ -85,7 +89,7 @@ public class WorkerResourceTest
           {
             return basePath;
           }
-        },null,null,null,null,null),
+        }, null, null, null, null),
         new RemoteTaskRunnerConfig(),
         cf,
         worker
@@ -95,7 +99,8 @@ public class WorkerResourceTest
     workerResource = new WorkerResource(
         worker,
         curatorCoordinator,
-        null
+        null,
+        EasyMock.createNiceMock(WorkerTaskMonitor.class)
     );
   }
 

@@ -26,14 +26,20 @@ import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.annotation.JsonValue;
 import com.google.common.base.Preconditions;
+import io.druid.guice.annotations.PublicApi;
+import io.druid.java.util.common.StringUtils;
+
+import java.util.Objects;
 
 /**
  */
+@PublicApi
 @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, property = "type", defaultImpl = StringDimensionSchema.class)
 @JsonSubTypes(value = {
     @JsonSubTypes.Type(name = DimensionSchema.STRING_TYPE_NAME, value = StringDimensionSchema.class),
     @JsonSubTypes.Type(name = DimensionSchema.LONG_TYPE_NAME, value = LongDimensionSchema.class),
     @JsonSubTypes.Type(name = DimensionSchema.FLOAT_TYPE_NAME, value = FloatDimensionSchema.class),
+    @JsonSubTypes.Type(name = DimensionSchema.DOUBLE_TYPE_NAME, value = DoubleDimensionSchema.class),
     @JsonSubTypes.Type(name = DimensionSchema.SPATIAL_TYPE_NAME, value = NewSpatialDimensionSchema.class),
 })
 public abstract class DimensionSchema
@@ -42,38 +48,49 @@ public abstract class DimensionSchema
   public static final String LONG_TYPE_NAME = "long";
   public static final String FLOAT_TYPE_NAME = "float";
   public static final String SPATIAL_TYPE_NAME = "spatial";
+  public static final String DOUBLE_TYPE_NAME = "double";
 
 
   // main druid and druid-api should really use the same ValueType enum.
   // merge them when druid-api is merged back into the main repo
+
+  /**
+   * Should be the same as {@code io.druid.segment.column.ValueType}.
+   * TODO merge them when druid-api is merged back into the main repo
+   */
   public enum ValueType
   {
     FLOAT,
     LONG,
     STRING,
+    DOUBLE,
+    @SuppressWarnings("unused") // used in io.druid.segment.column.ValueType
     COMPLEX;
 
     @JsonValue
     @Override
     public String toString()
     {
-      return this.name().toUpperCase();
+      return StringUtils.toUpperCase(this.name());
     }
 
     @JsonCreator
     public static ValueType fromString(String name)
     {
-      return valueOf(name.toUpperCase());
+      return valueOf(StringUtils.toUpperCase(name));
     }
   }
 
-  public static enum MultiValueHandling
+  public enum MultiValueHandling
   {
     SORTED_ARRAY,
     SORTED_SET,
     ARRAY {
       @Override
-      public boolean needSorting() { return false;}
+      public boolean needSorting()
+      {
+        return false;
+      }
     };
 
     public boolean needSorting()
@@ -85,13 +102,13 @@ public abstract class DimensionSchema
     @JsonValue
     public String toString()
     {
-      return name().toUpperCase();
+      return StringUtils.toUpperCase(name());
     }
 
     @JsonCreator
     public static MultiValueHandling fromString(String name)
     {
-      return name == null ? ofDefault() : valueOf(name.toUpperCase());
+      return name == null ? ofDefault() : valueOf(StringUtils.toUpperCase(name));
     }
 
     // this can be system configuration
@@ -103,11 +120,13 @@ public abstract class DimensionSchema
 
   private final String name;
   private final MultiValueHandling multiValueHandling;
+  private final boolean createBitmapIndex;
 
-  protected DimensionSchema(String name, MultiValueHandling multiValueHandling)
+  protected DimensionSchema(String name, MultiValueHandling multiValueHandling, boolean createBitmapIndex)
   {
     this.name = Preconditions.checkNotNull(name, "Dimension name cannot be null.");
-    this.multiValueHandling = multiValueHandling;
+    this.multiValueHandling = multiValueHandling == null ? MultiValueHandling.ofDefault() : multiValueHandling;
+    this.createBitmapIndex = createBitmapIndex;
   }
 
   @JsonProperty
@@ -122,6 +141,12 @@ public abstract class DimensionSchema
     return multiValueHandling;
   }
 
+  @JsonProperty("createBitmapIndex")
+  public boolean hasBitmapIndex()
+  {
+    return createBitmapIndex;
+  }
+
   @JsonIgnore
   public abstract String getTypeName();
 
@@ -129,7 +154,7 @@ public abstract class DimensionSchema
   public abstract ValueType getValueType();
 
   @Override
-  public boolean equals(Object o)
+  public boolean equals(final Object o)
   {
     if (this == o) {
       return true;
@@ -137,16 +162,29 @@ public abstract class DimensionSchema
     if (o == null || getClass() != o.getClass()) {
       return false;
     }
-
-    DimensionSchema that = (DimensionSchema) o;
-
-    return name.equals(that.name);
-
+    final DimensionSchema that = (DimensionSchema) o;
+    return createBitmapIndex == that.createBitmapIndex &&
+           Objects.equals(name, that.name) &&
+           Objects.equals(getTypeName(), that.getTypeName()) &&
+           Objects.equals(getValueType(), that.getValueType()) &&
+           multiValueHandling == that.multiValueHandling;
   }
 
   @Override
   public int hashCode()
   {
-    return name.hashCode();
+    return Objects.hash(name, multiValueHandling, createBitmapIndex, getTypeName(), getValueType());
+  }
+
+  @Override
+  public String toString()
+  {
+    return "DimensionSchema{" +
+           "name='" + name + '\'' +
+           ", valueType=" + getValueType() +
+           ", typeName=" + getTypeName() +
+           ", multiValueHandling=" + multiValueHandling +
+           ", createBitmapIndex=" + createBitmapIndex +
+           '}';
   }
 }

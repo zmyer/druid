@@ -22,7 +22,6 @@ package io.druid.query;
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.io.Closeables;
 import com.google.common.util.concurrent.MoreExecutors;
@@ -31,15 +30,16 @@ import io.druid.data.input.impl.DimensionsSpec;
 import io.druid.data.input.impl.MapInputRowParser;
 import io.druid.data.input.impl.TimeAndDimsParseSpec;
 import io.druid.data.input.impl.TimestampSpec;
+import io.druid.java.util.common.DateTimes;
 import io.druid.java.util.common.ISE;
 import io.druid.java.util.common.guava.FunctionalIterable;
 import io.druid.java.util.common.guava.Sequence;
-import io.druid.java.util.common.guava.Sequences;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.aggregation.DoubleSumAggregatorFactory;
 import io.druid.query.aggregation.LongSumAggregatorFactory;
 import io.druid.query.aggregation.hyperloglog.HyperUniquesAggregatorFactory;
+import io.druid.query.expression.TestExprMacroTable;
 import io.druid.query.filter.BoundDimFilter;
 import io.druid.query.ordering.StringComparators;
 import io.druid.query.timeseries.TimeseriesQuery;
@@ -49,7 +49,6 @@ import io.druid.segment.IndexBuilder;
 import io.druid.segment.QueryableIndex;
 import io.druid.segment.QueryableIndexSegment;
 import io.druid.segment.incremental.IncrementalIndexSchema;
-import org.joda.time.DateTime;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -68,11 +67,11 @@ public class SchemaEvolutionTest
 {
   private static final String DATA_SOURCE = "foo";
   private static final String TIMESTAMP_COLUMN = "t";
-  private static final double THIRTY_ONE_POINT_ONE = 31.100000381469727d;
+  private static final double THIRTY_ONE_POINT_ONE = 31.1d;
 
   public static List<Result<TimeseriesResultValue>> timeseriesResult(final Map<String, ?> map)
   {
-    return ImmutableList.of(new Result<>(new DateTime("2000"), new TimeseriesResultValue((Map<String, Object>) map)));
+    return ImmutableList.of(new Result<>(DateTimes.of("2000"), new TimeseriesResultValue((Map<String, Object>) map)));
   }
 
   public static List<InputRow> inputRowsWithDimensions(final List<String> dimensions)
@@ -88,12 +87,12 @@ public class SchemaEvolutionTest
         )
     );
     return ImmutableList.of(
-        parser.parse(ImmutableMap.<String, Object>of("t", "2000-01-01", "c1", "9", "c2", ImmutableList.of("a"))),
-        parser.parse(ImmutableMap.<String, Object>of("t", "2000-01-02", "c1", "10.1", "c2", ImmutableList.of())),
-        parser.parse(ImmutableMap.<String, Object>of("t", "2000-01-03", "c1", "2", "c2", ImmutableList.of(""))),
-        parser.parse(ImmutableMap.<String, Object>of("t", "2001-01-01", "c1", "1", "c2", ImmutableList.of("a", "c"))),
-        parser.parse(ImmutableMap.<String, Object>of("t", "2001-01-02", "c1", "4", "c2", ImmutableList.of("abc"))),
-        parser.parse(ImmutableMap.<String, Object>of("t", "2001-01-03", "c1", "5"))
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2000-01-01", "c1", "9", "c2", ImmutableList.of("a"))).get(0),
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2000-01-02", "c1", "10.1", "c2", ImmutableList.of())).get(0),
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2000-01-03", "c1", "2", "c2", ImmutableList.of(""))).get(0),
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2001-01-01", "c1", "1", "c2", ImmutableList.of("a", "c"))).get(0),
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2001-01-02", "c1", "4", "c2", ImmutableList.of("abc"))).get(0),
+        parser.parseBatch(ImmutableMap.<String, Object>of("t", "2001-01-03", "c1", "5")).get(0)
     );
   }
 
@@ -122,8 +121,8 @@ public class SchemaEvolutionTest
             )
         ),
         (QueryToolChest<T, Query<T>>) factory.getToolchest()
-    ).run(query, Maps.<String, Object>newHashMap());
-    return Sequences.toList(results, Lists.<T>newArrayList());
+    ).run(QueryPlus.wrap(query), Maps.<String, Object>newHashMap());
+    return results.toList();
   }
 
   @Rule
@@ -149,7 +148,7 @@ public class SchemaEvolutionTest
                          .tmpDir(temporaryFolder.newFolder())
                          .schema(
                              new IncrementalIndexSchema.Builder()
-                                 .withMetrics(new AggregatorFactory[]{new CountAggregatorFactory("cnt")})
+                                 .withMetrics(new CountAggregatorFactory("cnt"))
                                  .withRollup(false)
                                  .build()
                          )
@@ -161,11 +160,11 @@ public class SchemaEvolutionTest
                          .tmpDir(temporaryFolder.newFolder())
                          .schema(
                              new IncrementalIndexSchema.Builder()
-                                 .withMetrics(new AggregatorFactory[]{
+                                 .withMetrics(
                                      new CountAggregatorFactory("cnt"),
                                      new LongSumAggregatorFactory("c1", "c1"),
                                      new HyperUniquesAggregatorFactory("uniques", "c2")
-                                 })
+                                 )
                                  .withRollup(false)
                                  .build()
                          )
@@ -177,11 +176,11 @@ public class SchemaEvolutionTest
                          .tmpDir(temporaryFolder.newFolder())
                          .schema(
                              new IncrementalIndexSchema.Builder()
-                                 .withMetrics(new AggregatorFactory[]{
+                                 .withMetrics(
                                      new CountAggregatorFactory("cnt"),
                                      new DoubleSumAggregatorFactory("c1", "c1"),
                                      new HyperUniquesAggregatorFactory("uniques", "c2")
-                                 })
+                                 )
                                  .withRollup(false)
                                  .build()
                          )
@@ -193,9 +192,7 @@ public class SchemaEvolutionTest
                          .tmpDir(temporaryFolder.newFolder())
                          .schema(
                              new IncrementalIndexSchema.Builder()
-                                 .withMetrics(new AggregatorFactory[]{
-                                     new HyperUniquesAggregatorFactory("c2", "c2")
-                                 })
+                                 .withMetrics(new HyperUniquesAggregatorFactory("c2", "c2"))
                                  .withRollup(false)
                                  .build()
                          )
@@ -261,15 +258,16 @@ public class SchemaEvolutionTest
             ImmutableList.of(
                 new LongSumAggregatorFactory("a", "c1"),
                 new DoubleSumAggregatorFactory("b", "c1"),
-                new LongSumAggregatorFactory("c", null, "c1 * 1"),
-                new DoubleSumAggregatorFactory("d", null, "c1 * 1")
+                new LongSumAggregatorFactory("c", null, "c1 * 1", TestExprMacroTable.INSTANCE),
+                new DoubleSumAggregatorFactory("d", null, "c1 * 1", TestExprMacroTable.INSTANCE)
             )
         )
         .build();
 
     // Only string(1)
+    // Note: Expressions implicitly cast strings to numbers, leading to the a/b vs c/d difference.
     Assert.assertEquals(
-        timeseriesResult(ImmutableMap.of("a", 0L, "b", 0.0, "c", 0L, "d", 0.0)),
+        timeseriesResult(ImmutableMap.of("a", 0L, "b", 0.0, "c", 31L, "d", THIRTY_ONE_POINT_ONE)),
         runQuery(query, factory, ImmutableList.of(index1))
     );
 
@@ -292,12 +290,13 @@ public class SchemaEvolutionTest
     );
 
     // string(1) + long(2) + float(3) + nonexistent(4)
+    // Note: Expressions implicitly cast strings to numbers, leading to the a/b vs c/d difference.
     Assert.assertEquals(
         timeseriesResult(ImmutableMap.of(
             "a", 31L * 2,
             "b", THIRTY_ONE_POINT_ONE + 31,
-            "c", 31L * 2,
-            "d", THIRTY_ONE_POINT_ONE + 31
+            "c", 31L * 3,
+            "d", THIRTY_ONE_POINT_ONE * 2 + 31
         )),
         runQuery(query, factory, ImmutableList.of(index1, index2, index3, index4))
     );
@@ -349,7 +348,7 @@ public class SchemaEvolutionTest
 
     // Only float(3) -- which we can't filter, but can aggregate
     Assert.assertEquals(
-        timeseriesResult(ImmutableMap.of("a", 19L, "b", 19.100000381469727, "c", 2L)),
+        timeseriesResult(ImmutableMap.of("a", 19L, "b", 19.1, "c", 2L)),
         runQuery(query, factory, ImmutableList.of(index3))
     );
 
@@ -363,7 +362,7 @@ public class SchemaEvolutionTest
     Assert.assertEquals(
         timeseriesResult(ImmutableMap.of(
             "a", 38L,
-            "b", 38.10000038146973,
+            "b", 38.1,
             "c", 6L
         )),
         runQuery(query, factory, ImmutableList.of(index1, index2, index3, index4))

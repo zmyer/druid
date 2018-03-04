@@ -45,12 +45,6 @@ public class CountAggregator implements Aggregator
   }
 
   @Override
-  public void reset()
-  {
-    count = 0;
-  }
-
-  @Override
   public Object get()
   {
     return count;
@@ -66,6 +60,12 @@ public class CountAggregator implements Aggregator
   public long getLong()
   {
     return count;
+  }
+
+  @Override
+  public double getDouble()
+  {
+    return (double) count;
   }
 
   @Override

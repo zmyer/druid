@@ -20,7 +20,7 @@
 package io.druid.storage.hdfs;
 
 import com.google.inject.Inject;
-import com.metamx.emitter.EmittingLogger;
+import io.druid.java.util.emitter.EmittingLogger;
 import io.druid.segment.loading.DataSegmentKiller;
 import io.druid.segment.loading.SegmentLoadingException;
 import io.druid.timeline.DataSegment;
@@ -82,7 +82,10 @@ public class HdfsDataSegmentKiller implements DataSegmentKiller
                 segmentPath.toString()
             );
           }
-          Path descriptorPath = new Path(segmentPath.getParent(), String.format("%s_descriptor.json", zipParts[0]));
+          Path descriptorPath = new Path(
+              segmentPath.getParent(),
+              io.druid.java.util.common.StringUtils.format("%s_descriptor.json", zipParts[0])
+          );
           //delete partitionNumber_descriptor.json
           if (!fs.delete(descriptorPath, false)) {
             throw new SegmentLoadingException(

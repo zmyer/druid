@@ -19,7 +19,7 @@
 
 package io.druid.segment.realtime.appenderator;
 
-import org.joda.time.DateTime;
+import io.druid.data.input.InputRow;
 
 import java.io.IOException;
 
@@ -28,15 +28,18 @@ public interface SegmentAllocator
   /**
    * Allocates a new segment for a given timestamp.
    *
-   * @param timestamp         timestamp of the event which triggered this allocation request
-   * @param sequenceName      sequenceName for this allocation
-   * @param previousSegmentId segment identifier returned on the previous call to allocate for your sequenceName
+   * @param row                     the event which triggered this allocation request
+   * @param sequenceName            sequenceName for this allocation
+   * @param previousSegmentId       segment identifier returned on the previous call to allocate for your sequenceName
+   * @param skipSegmentLineageCheck if true, perform lineage validation using previousSegmentId for this sequence.
+   *                                Should be set to false if replica tasks would index events in same order
    *
    * @return the pending segment identifier, or null if it was impossible to allocate a new segment
    */
   SegmentIdentifier allocate(
-      DateTime timestamp,
+      InputRow row,
       String sequenceName,
-      String previousSegmentId
+      String previousSegmentId,
+      boolean skipSegmentLineageCheck
   ) throws IOException;
 }

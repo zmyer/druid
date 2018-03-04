@@ -19,15 +19,13 @@
 
 package io.druid.common.guava;
 
-import com.google.common.collect.Ordering;
 import com.google.common.primitives.Ints;
-
+import io.druid.java.util.common.guava.Comparators;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
 import io.druid.java.util.common.guava.Yielder;
 import io.druid.java.util.common.guava.YieldingAccumulator;
 import io.druid.java.util.common.guava.nary.BinaryFn;
-
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -50,7 +48,7 @@ public class ComplexSequenceTest
 
   private void check(String expected, Sequence<Integer> complex)
   {
-    List<Integer> combined = Sequences.toList(complex, new ArrayList<Integer>());
+    List<Integer> combined = complex.toList();
     Assert.assertEquals(expected, combined.toString());
 
     Yielder<Integer> yielder = complex.toYielder(
@@ -82,22 +80,13 @@ public class ComplexSequenceTest
 
   private Sequence<Integer> combine(Sequence<Integer> sequence)
   {
-    return CombiningSequence.create(sequence, alwaysSame, plus);
+    return CombiningSequence.create(sequence, Comparators.alwaysEqual(), plus);
   }
 
   private Sequence<Integer> concat(Sequence<Integer>... sequences)
   {
     return Sequences.concat(Arrays.asList(sequences));
   }
-
-  private final Ordering<Integer> alwaysSame = new Ordering<Integer>()
-  {
-    @Override
-    public int compare(Integer left, Integer right)
-    {
-      return 0;
-    }
-  };
 
   private final BinaryFn<Integer, Integer, Integer> plus = new BinaryFn<Integer, Integer, Integer>()
   {

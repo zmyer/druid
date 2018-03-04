@@ -24,6 +24,7 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.primitives.Doubles;
 import com.google.common.primitives.Longs;
 
+import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.util.Comparator;
 
@@ -48,7 +49,8 @@ import java.util.Comparator;
  */
 public class VarianceAggregatorCollector
 {
-  public static boolean isVariancePop(String estimator) {
+  public static boolean isVariancePop(String estimator)
+  {
     return estimator != null && estimator.equalsIgnoreCase("population");
   }
 
@@ -73,34 +75,34 @@ public class VarianceAggregatorCollector
     }
   };
 
-  static Object combineValues(Object lhs, Object rhs)
+  void fold(@Nullable VarianceAggregatorCollector other)
   {
-    final VarianceAggregatorCollector holder1 = (VarianceAggregatorCollector) lhs;
-    final VarianceAggregatorCollector holder2 = (VarianceAggregatorCollector) rhs;
-
-    if (holder2.count == 0) {
-      return holder1;
+    if (other == null || other.count == 0) {
+      return;
     }
-    if (holder1.count == 0) {
-      holder1.nvariance = holder2.nvariance;
-      holder1.count = holder2.count;
-      holder1.sum = holder2.sum;
-      return holder1;
+    if (this.count == 0) {
+      this.nvariance = other.nvariance;
+      this.count = other.count;
+      this.sum = other.sum;
+      return;
     }
+    final double ratio = this.count / (double) other.count;
+    final double t = this.sum / ratio - other.sum;
 
-    final double ratio = holder1.count / (double) holder2.count;
-    final double t = holder1.sum / ratio - holder2.sum;
+    this.nvariance += other.nvariance + (ratio / (this.count + other.count) * t * t);
+    this.count += other.count;
+    this.sum += other.sum;
+  }
 
-    holder1.nvariance += holder2.nvariance + (ratio / (holder1.count + holder2.count) * t * t);
-    holder1.count += holder2.count;
-    holder1.sum += holder2.sum;
-
-    return holder1;
+  static Object combineValues(Object lhs, @Nullable Object rhs)
+  {
+    ((VarianceAggregatorCollector) lhs).fold((VarianceAggregatorCollector) rhs);
+    return lhs;
   }
 
   static int getMaxIntermediateSize()
   {
-    return Longs.BYTES + Doubles.BYTES + Doubles.BYTES;
+    return Long.BYTES + Double.BYTES + Double.BYTES;
   }
 
   long count; // number of elements
@@ -117,6 +119,13 @@ public class VarianceAggregatorCollector
     count = 0;
     sum = 0;
     nvariance = 0;
+  }
+
+  void copyFrom(VarianceAggregatorCollector other)
+  {
+    this.count = other.count;
+    this.sum = other.sum;
+    this.nvariance = other.nvariance;
   }
 
   public VarianceAggregatorCollector(long count, double sum, double nvariance)
@@ -173,7 +182,7 @@ public class VarianceAggregatorCollector
 
   public ByteBuffer toByteBuffer()
   {
-    return ByteBuffer.allocate(Longs.BYTES + Doubles.BYTES + Doubles.BYTES)
+    return ByteBuffer.allocate(Long.BYTES + Double.BYTES + Double.BYTES)
                      .putLong(count)
                      .putDouble(sum)
                      .putDouble(nvariance);

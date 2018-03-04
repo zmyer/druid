@@ -26,18 +26,23 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import io.druid.collections.bitmap.ImmutableBitmap;
 import io.druid.common.guava.SettableSupplier;
-import io.druid.common.utils.JodaUtils;
 import io.druid.data.input.InputRow;
+import io.druid.java.util.common.Intervals;
 import io.druid.java.util.common.Pair;
+import io.druid.java.util.common.StringUtils;
 import io.druid.java.util.common.granularity.Granularities;
 import io.druid.java.util.common.guava.Sequence;
 import io.druid.java.util.common.guava.Sequences;
+import io.druid.segment.writeout.OffHeapMemorySegmentWriteOutMediumFactory;
+import io.druid.segment.writeout.SegmentWriteOutMediumFactory;
+import io.druid.segment.writeout.TmpFileSegmentWriteOutMediumFactory;
+import io.druid.query.BitmapResultFactory;
 import io.druid.query.aggregation.Aggregator;
 import io.druid.query.aggregation.CountAggregatorFactory;
 import io.druid.query.aggregation.FilteredAggregatorFactory;
 import io.druid.query.dimension.DefaultDimensionSpec;
+import io.druid.query.expression.TestExprMacroTable;
 import io.druid.query.filter.BitmapIndexSelector;
 import io.druid.query.filter.DimFilter;
 import io.druid.query.filter.Filter;
@@ -48,12 +53,10 @@ import io.druid.segment.ColumnSelectorFactory;
 import io.druid.segment.Cursor;
 import io.druid.segment.DimensionSelector;
 import io.druid.segment.IndexBuilder;
-import io.druid.segment.IndexMerger;
 import io.druid.segment.IndexSpec;
 import io.druid.segment.QueryableIndex;
 import io.druid.segment.QueryableIndexStorageAdapter;
 import io.druid.segment.StorageAdapter;
-import io.druid.segment.TestHelper;
 import io.druid.segment.VirtualColumn;
 import io.druid.segment.VirtualColumns;
 import io.druid.segment.column.ValueType;
@@ -64,7 +67,6 @@ import io.druid.segment.data.RoaringBitmapSerdeFactory;
 import io.druid.segment.incremental.IncrementalIndex;
 import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
 import io.druid.segment.virtual.ExpressionVirtualColumn;
-import org.joda.time.Interval;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
@@ -73,7 +75,6 @@ import org.junit.runners.Parameterized;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
@@ -83,7 +84,7 @@ public abstract class BaseFilterTest
 {
   private static final VirtualColumns VIRTUAL_COLUMNS = VirtualColumns.create(
       ImmutableList.<VirtualColumn>of(
-          new ExpressionVirtualColumn("expr", "1.0 + 0.1")
+          new ExpressionVirtualColumn("expr", "1.0 + 0.1", ValueType.FLOAT, TestExprMacroTable.INSTANCE)
       )
   );
 
@@ -95,7 +96,6 @@ public abstract class BaseFilterTest
   protected final IndexBuilder indexBuilder;
   protected final Function<IndexBuilder, Pair<StorageAdapter, Closeable>> finisher;
   protected StorageAdapter adapter;
-  protected Closeable closeable;
   protected boolean cnf;
   protected boolean optimize;
   protected final String testName;
@@ -104,15 +104,8 @@ public abstract class BaseFilterTest
   // For filter tests, the test setup creates a segment.
   // Creating a new segment for every test method call is pretty slow, so cache the StorageAdapters.
   // Each thread gets its own map.
-  protected static ThreadLocal<Map<String, Map<String, Pair<StorageAdapter, Closeable>>>> adapterCache =
-      new ThreadLocal<Map<String, Map<String, Pair<StorageAdapter, Closeable>>>>()
-      {
-        @Override
-        protected Map<String, Map<String, Pair<StorageAdapter, Closeable>>> initialValue()
-        {
-          return new HashMap<>();
-        }
-      };
+  private static ThreadLocal<Map<String, Map<String, Pair<StorageAdapter, Closeable>>>> adapterCache =
+      ThreadLocal.withInitial(HashMap::new);
 
   public BaseFilterTest(
       String testName,
@@ -150,7 +143,6 @@ public abstract class BaseFilterTest
     }
 
     this.adapter = pair.lhs;
-    this.closeable = pair.rhs;
 
   }
 
@@ -182,9 +174,9 @@ public abstract class BaseFilterTest
         "roaring", new RoaringBitmapSerdeFactory(true)
     );
 
-    final Map<String, IndexMerger> indexMergers = ImmutableMap.<String, IndexMerger>of(
-        "IndexMerger", TestHelper.getTestIndexMerger(),
-        "IndexMergerV9", TestHelper.getTestIndexMergerV9()
+    final Map<String, SegmentWriteOutMediumFactory> segmentWriteOutMediumFactories = ImmutableMap.of(
+        "tmpFile segment write-out medium", TmpFileSegmentWriteOutMediumFactory.instance(),
+        "off-heap memory segment write-out medium", OffHeapMemorySegmentWriteOutMediumFactory.instance()
     );
 
     final Map<String, Function<IndexBuilder, Pair<StorageAdapter, Closeable>>> finishers = ImmutableMap.of(
@@ -248,25 +240,23 @@ public abstract class BaseFilterTest
     );
 
     for (Map.Entry<String, BitmapSerdeFactory> bitmapSerdeFactoryEntry : bitmapSerdeFactories.entrySet()) {
-      for (Map.Entry<String, IndexMerger> indexMergerEntry : indexMergers.entrySet()) {
-        for (Map.Entry<String, Function<IndexBuilder, Pair<StorageAdapter, Closeable>>> finisherEntry : finishers.entrySet()) {
+      for (Map.Entry<String, SegmentWriteOutMediumFactory> segmentWriteOutMediumFactoryEntry :
+          segmentWriteOutMediumFactories.entrySet()) {
+        for (Map.Entry<String, Function<IndexBuilder, Pair<StorageAdapter, Closeable>>> finisherEntry :
+            finishers.entrySet()) {
           for (boolean cnf : ImmutableList.of(false, true)) {
             for (boolean optimize : ImmutableList.of(false, true)) {
-              final String testName = String.format(
+              final String testName = StringUtils.format(
                   "bitmaps[%s], indexMerger[%s], finisher[%s], optimize[%s]",
                   bitmapSerdeFactoryEntry.getKey(),
-                  indexMergerEntry.getKey(),
+                  segmentWriteOutMediumFactoryEntry.getKey(),
                   finisherEntry.getKey(),
                   optimize
               );
-              final IndexBuilder indexBuilder = IndexBuilder.create()
-                                                            .indexSpec(new IndexSpec(
-                                                                bitmapSerdeFactoryEntry.getValue(),
-                                                                null,
-                                                                null,
-                                                                null
-                                                            ))
-                                                            .indexMerger(indexMergerEntry.getValue());
+              final IndexBuilder indexBuilder = IndexBuilder
+                  .create()
+                  .indexSpec(new IndexSpec(bitmapSerdeFactoryEntry.getValue(), null, null, null))
+                  .segmentWriteOutMediumFactory(segmentWriteOutMediumFactoryEntry.getValue());
 
               constructors.add(new Object[]{testName, indexBuilder, finisherEntry.getValue(), cnf, optimize});
             }
@@ -301,10 +291,11 @@ public abstract class BaseFilterTest
   {
     return adapter.makeCursors(
         filter,
-        new Interval(JodaUtils.MIN_INSTANT, JodaUtils.MAX_INSTANT),
+        Intervals.ETERNITY,
         VIRTUAL_COLUMNS,
         Granularities.ALL,
-        false
+        false,
+        null
     );
   }
 
@@ -321,9 +312,9 @@ public abstract class BaseFilterTest
           @Override
           public List<String> apply(Cursor input)
           {
-            final DimensionSelector selector = input.makeDimensionSelector(
-                new DefaultDimensionSpec(selectColumn, selectColumn)
-            );
+            final DimensionSelector selector = input
+                .getColumnSelectorFactory()
+                .makeDimensionSelector(new DefaultDimensionSpec(selectColumn, selectColumn));
 
             final List<String> values = Lists.newArrayList();
 
@@ -338,7 +329,7 @@ public abstract class BaseFilterTest
           }
         }
     );
-    return Sequences.toList(seq, new ArrayList<List<String>>()).get(0);
+    return seq.toList().get(0);
   }
 
   private long selectCountUsingFilteredAggregator(final DimFilter filter)
@@ -354,7 +345,7 @@ public abstract class BaseFilterTest
             Aggregator agg = new FilteredAggregatorFactory(
                 new CountAggregatorFactory("count"),
                 maybeOptimize(filter)
-            ).factorize(input);
+            ).factorize(input.getColumnSelectorFactory());
 
             for (; !input.isDone(); input.advance()) {
               agg.aggregate();
@@ -364,7 +355,7 @@ public abstract class BaseFilterTest
           }
         }
     );
-    return Sequences.toList(aggSeq, new ArrayList<Aggregator>()).get(0).getLong();
+    return aggSeq.toList().get(0).getLong();
   }
 
   private List<String> selectColumnValuesMatchingFilterUsingPostFiltering(
@@ -376,7 +367,7 @@ public abstract class BaseFilterTest
     final Filter postFilteringFilter = new Filter()
     {
       @Override
-      public ImmutableBitmap getBitmapIndex(BitmapIndexSelector selector)
+      public <T> T getBitmapResult(BitmapIndexSelector selector, BitmapResultFactory<T> bitmapResultFactory)
       {
         throw new UnsupportedOperationException();
       }
@@ -416,9 +407,9 @@ public abstract class BaseFilterTest
           @Override
           public List<String> apply(Cursor input)
           {
-            final DimensionSelector selector = input.makeDimensionSelector(
-                new DefaultDimensionSpec(selectColumn, selectColumn)
-            );
+            final DimensionSelector selector = input
+                .getColumnSelectorFactory()
+                .makeDimensionSelector(new DefaultDimensionSpec(selectColumn, selectColumn));
 
             final List<String> values = Lists.newArrayList();
 
@@ -433,7 +424,7 @@ public abstract class BaseFilterTest
           }
         }
     );
-    return Sequences.toList(seq, new ArrayList<List<String>>()).get(0);
+    return seq.toList().get(0);
   }
 
   private List<String> selectColumnValuesMatchingFilterUsingRowBasedColumnSelectorFactory(

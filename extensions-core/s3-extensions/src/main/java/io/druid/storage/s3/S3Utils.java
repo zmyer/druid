@@ -22,10 +22,8 @@ package io.druid.storage.s3;
 import com.google.common.base.Joiner;
 import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
-
 import io.druid.java.util.common.RetryUtils;
-import io.druid.segment.loading.DataSegmentPusherUtil;
-import io.druid.timeline.DataSegment;
+import io.druid.java.util.common.RetryUtils.Task;
 import org.jets3t.service.ServiceException;
 import org.jets3t.service.StorageObjectsChunk;
 import org.jets3t.service.impl.rest.httpclient.RestS3Service;
@@ -34,7 +32,6 @@ import org.jets3t.service.model.StorageObject;
 
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.concurrent.Callable;
 
 /**
  *
@@ -85,7 +82,7 @@ public class S3Utils
    * Retries S3 operations that fail due to io-related exceptions. Service-level exceptions (access denied, file not
    * found, etc) are not retried.
    */
-  public static <T> T retryS3Operation(Callable<T> f) throws Exception
+  public static <T> T retryS3Operation(Task<T> f) throws Exception
   {
     final int maxTries = 10;
     return RetryUtils.retry(f, S3RETRY, maxTries);
@@ -149,15 +146,7 @@ public class S3Utils
       {
         try {
           return retryS3Operation(
-              new Callable<StorageObjectsChunk>()
-              {
-                @Override
-                public StorageObjectsChunk call() throws Exception
-                {
-                  return s3Client.listObjectsChunked(
-                      bucket, prefix, null, maxListingLength, priorLastKey);
-                }
-              }
+              () -> s3Client.listObjectsChunked(bucket, prefix, null, maxListingLength, priorLastKey)
           );
         }
         catch (Exception e) {
@@ -187,11 +176,11 @@ public class S3Utils
     };
   }
 
-  public static String constructSegmentPath(String baseKey, DataSegment segment)
+  public static String constructSegmentPath(String baseKey, String storageDir)
   {
     return JOINER.join(
         baseKey.isEmpty() ? null : baseKey,
-        DataSegmentPusherUtil.getStorageDir(segment)
+        storageDir
     ) + "/index.zip";
   }
 

@@ -38,11 +38,6 @@ public final class NoopAggregator implements Aggregator
   }
 
   @Override
-  public void reset()
-  {
-  }
-
-  @Override
   public Object get()
   {
     return null;
@@ -50,6 +45,12 @@ public final class NoopAggregator implements Aggregator
 
   @Override
   public float getFloat()
+  {
+    return 0;
+  }
+
+  @Override
+  public double getDouble()
   {
     return 0;
   }

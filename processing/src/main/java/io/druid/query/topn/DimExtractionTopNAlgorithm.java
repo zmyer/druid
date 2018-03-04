@@ -82,17 +82,16 @@ public class DimExtractionTopNAlgorithm extends BaseTopNAlgorithm<Aggregator[][]
   }
 
   @Override
-  public void scanAndAggregate(
+  public long scanAndAggregate(
       TopNParams params,
       Aggregator[][] rowSelector,
-      Map<Comparable, Aggregator[]> aggregatesStore,
-      int numProcessed
+      Map<Comparable, Aggregator[]> aggregatesStore
   )
   {
     final Cursor cursor = params.getCursor();
     final ColumnSelectorPlus<TopNColumnSelectorStrategy> selectorPlus = params.getSelectorPlus();
 
-    selectorPlus.getColumnSelectorStrategy().dimExtractionScanAndAggregate(
+    return selectorPlus.getColumnSelectorStrategy().dimExtractionScanAndAggregate(
         query,
         selectorPlus.getSelector(),
         cursor,

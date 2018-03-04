@@ -20,20 +20,20 @@
 package io.druid.query.groupby;
 
 import com.google.common.base.Predicate;
-import com.google.common.base.Strings;
 import com.google.common.base.Supplier;
 import com.google.common.collect.ImmutableMap;
+import io.druid.common.config.NullHandling;
 import io.druid.data.input.Row;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.extraction.ExtractionFn;
 import io.druid.query.filter.ValueMatcher;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
 import io.druid.segment.ColumnSelectorFactory;
+import io.druid.segment.ColumnValueSelector;
+import io.druid.segment.DimensionHandlerUtils;
 import io.druid.segment.DimensionSelector;
-import io.druid.segment.FloatColumnSelector;
 import io.druid.segment.IdLookup;
 import io.druid.segment.LongColumnSelector;
-import io.druid.segment.ObjectColumnSelector;
 import io.druid.segment.column.Column;
 import io.druid.segment.column.ColumnCapabilities;
 import io.druid.segment.column.ColumnCapabilitiesImpl;
@@ -124,6 +124,13 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
               String rowValue = extractionFn.apply(row.get().getTimestampFromEpoch());
               return Objects.equals(rowValue, value);
             }
+
+            @Override
+            public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+            {
+              inspector.visit("row", row);
+              inspector.visit("extractionFn", extractionFn);
+            }
           };
         }
 
@@ -137,6 +144,14 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
             {
               String rowValue = extractionFn.apply(row.get().getTimestampFromEpoch());
               return predicate.apply(rowValue);
+            }
+
+            @Override
+            public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+            {
+              inspector.visit("row", row);
+              inspector.visit("extractionFn", extractionFn);
+              inspector.visit("predicate", predicate);
             }
           };
         }
@@ -166,6 +181,19 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
           return null;
         }
 
+        @Nullable
+        @Override
+        public Object getObject()
+        {
+          return lookupName(0);
+        }
+
+        @Override
+        public Class classOfObject()
+        {
+          return String.class;
+        }
+
         @Override
         public void inspectRuntimeShape(RuntimeShapeInspector inspector)
         {
@@ -176,11 +204,14 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
     } else {
       return new DimensionSelector()
       {
+        private final RangeIndexedInts indexedInts = new RangeIndexedInts();
+
         @Override
         public IndexedInts getRow()
         {
           final List<String> dimensionValues = row.get().getDimension(dimension);
-          return RangeIndexedInts.create(dimensionValues != null ? dimensionValues.size() : 0);
+          indexedInts.setSize(dimensionValues != null ? dimensionValues.size() : 0);
+          return indexedInts;
         }
 
         @Override
@@ -198,11 +229,17 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
                 }
 
                 for (String dimensionValue : dimensionValues) {
-                  if (Objects.equals(Strings.emptyToNull(dimensionValue), value)) {
+                  if (Objects.equals(NullHandling.emptyToNullIfNeeded(dimensionValue), value)) {
                     return true;
                   }
                 }
                 return false;
+              }
+
+              @Override
+              public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+              {
+                inspector.visit("row", row);
               }
             };
           } else {
@@ -217,11 +254,18 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
                 }
 
                 for (String dimensionValue : dimensionValues) {
-                  if (Objects.equals(extractionFn.apply(Strings.emptyToNull(dimensionValue)), value)) {
+                  if (Objects.equals(extractionFn.apply(NullHandling.emptyToNullIfNeeded(dimensionValue)), value)) {
                     return true;
                   }
                 }
                 return false;
+              }
+
+              @Override
+              public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+              {
+                inspector.visit("row", row);
+                inspector.visit("extractionFn", extractionFn);
               }
             };
           }
@@ -243,11 +287,18 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
                 }
 
                 for (String dimensionValue : dimensionValues) {
-                  if (predicate.apply(Strings.emptyToNull(dimensionValue))) {
+                  if (predicate.apply(NullHandling.emptyToNullIfNeeded(dimensionValue))) {
                     return true;
                   }
                 }
                 return false;
+              }
+
+              @Override
+              public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+              {
+                inspector.visit("row", row);
+                inspector.visit("predicate", predicate);
               }
             };
           } else {
@@ -262,11 +313,18 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
                 }
 
                 for (String dimensionValue : dimensionValues) {
-                  if (predicate.apply(extractionFn.apply(Strings.emptyToNull(dimensionValue)))) {
+                  if (predicate.apply(extractionFn.apply(NullHandling.emptyToNullIfNeeded(dimensionValue)))) {
                     return true;
                   }
                 }
                 return false;
+              }
+
+              @Override
+              public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+              {
+                inspector.visit("row", row);
+                inspector.visit("predicate", predicate);
               }
             };
           }
@@ -281,7 +339,7 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
         @Override
         public String lookupName(int id)
         {
-          final String value = Strings.emptyToNull(row.get().getDimension(dimension).get(id));
+          final String value = NullHandling.emptyToNullIfNeeded(row.get().getDimension(dimension).get(id));
           return extractionFn == null ? value : extractionFn.apply(value);
         }
 
@@ -298,6 +356,26 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
           return null;
         }
 
+        @Nullable
+        @Override
+        public Object getObject()
+        {
+          List<String> dimensionValues = row.get().getDimension(dimension);
+          if (dimensionValues == null) {
+            return null;
+          }
+          if (dimensionValues.size() == 1) {
+            return dimensionValues.get(0);
+          }
+          return dimensionValues.toArray(new String[0]);
+        }
+
+        @Override
+        public Class classOfObject()
+        {
+          return Object.class;
+        }
+
         @Override
         public void inspectRuntimeShape(RuntimeShapeInspector inspector)
         {
@@ -309,92 +387,71 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
   }
 
   @Override
-  public FloatColumnSelector makeFloatColumnSelector(final String columnName)
+  public ColumnValueSelector<?> makeColumnValueSelector(String columnName)
   {
-    abstract class RowBasedFloatColumnSelector implements FloatColumnSelector
-    {
-      @Override
-      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-      {
-        inspector.visit("row", row);
-      }
-    }
     if (columnName.equals(Column.TIME_COLUMN_NAME)) {
-      class TimeFloatColumnSelector extends RowBasedFloatColumnSelector
+      class TimeLongColumnSelector implements LongColumnSelector
       {
         @Override
-        public float get()
-        {
-          return (float) row.get().getTimestampFromEpoch();
-        }
-      }
-      return new TimeFloatColumnSelector();
-    } else {
-      return new RowBasedFloatColumnSelector()
-      {
-        @Override
-        public float get()
-        {
-          return row.get().getFloatMetric(columnName);
-        }
-      };
-    }
-  }
-
-  @Override
-  public LongColumnSelector makeLongColumnSelector(final String columnName)
-  {
-    abstract class RowBasedLongColumnSelector implements LongColumnSelector
-    {
-      @Override
-      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-      {
-        inspector.visit("row", row);
-      }
-    }
-    if (columnName.equals(Column.TIME_COLUMN_NAME)) {
-      class TimeLongColumnSelector extends RowBasedLongColumnSelector
-      {
-        @Override
-        public long get()
+        public long getLong()
         {
           return row.get().getTimestampFromEpoch();
+        }
+
+        @Override
+        public boolean isNull()
+        {
+          // Time column never has null values
+          return false;
+        }
+
+        @Override
+        public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+        {
+          inspector.visit("row", row);
         }
       }
       return new TimeLongColumnSelector();
     } else {
-      return new RowBasedLongColumnSelector()
+      return new ColumnValueSelector()
       {
         @Override
-        public long get()
+        public boolean isNull()
         {
-          return row.get().getLongMetric(columnName);
-        }
-      };
-    }
-  }
-
-  @Override
-  public ObjectColumnSelector makeObjectColumnSelector(final String columnName)
-  {
-    if (columnName.equals(Column.TIME_COLUMN_NAME)) {
-      return new ObjectColumnSelector()
-      {
-        @Override
-        public Class classOfObject()
-        {
-          return Long.class;
+          return row.get().getRaw(columnName) == null;
         }
 
         @Override
-        public Object get()
+        public double getDouble()
         {
-          return row.get().getTimestampFromEpoch();
+          Number metric = row.get().getMetric(columnName);
+          assert NullHandling.replaceWithDefault() || metric != null;
+          return DimensionHandlerUtils.nullToZero(metric).doubleValue();
         }
-      };
-    } else {
-      return new ObjectColumnSelector()
-      {
+
+        @Override
+        public float getFloat()
+        {
+          Number metric = row.get().getMetric(columnName);
+          assert NullHandling.replaceWithDefault() || metric != null;
+          return DimensionHandlerUtils.nullToZero(metric).floatValue();
+        }
+
+        @Override
+        public long getLong()
+        {
+          Number metric = row.get().getMetric(columnName);
+          assert NullHandling.replaceWithDefault() || metric != null;
+          return DimensionHandlerUtils.nullToZero(metric).longValue();
+        }
+
+        @Nullable
+        @Override
+        public Object getObject()
+        {
+          return row.get().getRaw(columnName);
+        }
+
         @Override
         public Class classOfObject()
         {
@@ -402,9 +459,9 @@ public class RowBasedColumnSelectorFactory implements ColumnSelectorFactory
         }
 
         @Override
-        public Object get()
+        public void inspectRuntimeShape(RuntimeShapeInspector inspector)
         {
-          return row.get().getRaw(columnName);
+          inspector.visit("row", row);
         }
       };
     }

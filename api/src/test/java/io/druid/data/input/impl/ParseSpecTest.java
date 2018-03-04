@@ -20,18 +20,18 @@
 package io.druid.data.input.impl;
 
 import com.google.common.collect.Lists;
-
 import io.druid.java.util.common.parsers.ParseException;
-
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
 
 public class ParseSpecTest
 {
   @Test(expected = ParseException.class)
   public void testDuplicateNames() throws Exception
   {
+    @SuppressWarnings("unused") // expected exception
     final ParseSpec spec = new DelimitedParseSpec(
         new TimestampSpec(
             "timestamp",
@@ -45,13 +45,16 @@ public class ParseSpecTest
         ),
         ",",
         " ",
-        Arrays.asList("a", "b")
+        Arrays.asList("a", "b"),
+        false,
+        0
     );
   }
 
   @Test(expected = IllegalArgumentException.class)
   public void testDimAndDimExcluOverlap() throws Exception
   {
+    @SuppressWarnings("unused") // expected exception
     final ParseSpec spec = new DelimitedParseSpec(
         new TimestampSpec(
             "timestamp",
@@ -65,13 +68,16 @@ public class ParseSpecTest
         ),
         ",",
         null,
-        Arrays.asList("a", "B")
+        Arrays.asList("a", "B"),
+        false,
+        0
     );
   }
 
   @Test
   public void testDimExclusionDuplicate() throws Exception
   {
+    @SuppressWarnings("unused") // expected exception
     final ParseSpec spec = new DelimitedParseSpec(
         new TimestampSpec(
             "timestamp",
@@ -79,13 +85,15 @@ public class ParseSpecTest
             null
         ),
         new DimensionsSpec(
-            DimensionsSpec.getDefaultSchemas(Arrays.asList("a")),
+            DimensionsSpec.getDefaultSchemas(Collections.singletonList("a")),
             Lists.newArrayList("B", "B"),
             Lists.<SpatialDimensionSchema>newArrayList()
         ),
         ",",
         null,
-        Arrays.asList("a", "B")
+        Arrays.asList("a", "B"),
+        false,
+        0
     );
   }
 }

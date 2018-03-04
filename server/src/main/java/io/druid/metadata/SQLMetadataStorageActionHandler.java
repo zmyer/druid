@@ -19,6 +19,7 @@
 
 package io.druid.metadata;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.base.Optional;
@@ -26,15 +27,15 @@ import com.google.common.base.Predicate;
 import com.google.common.base.Throwables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.metamx.emitter.EmittingLogger;
-
+import io.druid.java.util.emitter.EmittingLogger;
+import io.druid.java.util.common.DateTimes;
 import io.druid.java.util.common.Pair;
 import io.druid.java.util.common.StringUtils;
-
 import org.joda.time.DateTime;
 import org.skife.jdbi.v2.FoldController;
 import org.skife.jdbi.v2.Folder3;
 import org.skife.jdbi.v2.Handle;
+import org.skife.jdbi.v2.Query;
 import org.skife.jdbi.v2.StatementContext;
 import org.skife.jdbi.v2.exceptions.CallbackFailedException;
 import org.skife.jdbi.v2.exceptions.StatementException;
@@ -42,13 +43,15 @@ import org.skife.jdbi.v2.tweak.HandleCallback;
 import org.skife.jdbi.v2.tweak.ResultSetMapper;
 import org.skife.jdbi.v2.util.ByteArrayMapper;
 
+import javax.annotation.Nullable;
 import java.io.IOException;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 
-public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, LockType>
+public abstract class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, LockType>
     implements MetadataStorageActionHandler<EntryType, StatusType, LogType, LockType>
 {
   private static final EmittingLogger log = new EmittingLogger(SQLMetadataStorageActionHandler.class);
@@ -87,6 +90,27 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     this.lockTable = lockTable;
   }
 
+  protected SQLMetadataConnector getConnector()
+  {
+    return connector;
+  }
+
+  protected ObjectMapper getJsonMapper()
+  {
+    return jsonMapper;
+  }
+
+  protected TypeReference getStatusType()
+  {
+    return statusType;
+  }
+
+  protected String getEntryTable()
+  {
+    return entryTable;
+  }
+
+  @Override
   public void insert(
       final String id,
       final DateTime timestamp,
@@ -104,7 +128,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
             public Void withHandle(Handle handle) throws Exception
             {
               handle.createStatement(
-                  String.format(
+                  StringUtils.format(
                       "INSERT INTO %s (id, created_date, datasource, payload, active, status_payload) VALUES (:id, :created_date, :datasource, :payload, :active, :status_payload)",
                       entryTable
                   )
@@ -144,6 +168,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     }
   }
 
+  @Override
   public boolean setStatus(final String entryId, final boolean active, final StatusType status)
   {
     return connector.retryWithHandle(
@@ -153,7 +178,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           public Boolean withHandle(Handle handle) throws Exception
           {
             return handle.createStatement(
-                String.format(
+                StringUtils.format(
                     "UPDATE %s SET active = :active, status_payload = :status_payload WHERE id = :id AND active = TRUE",
                     entryTable
                 )
@@ -167,6 +192,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     );
   }
 
+  @Override
   public Optional<EntryType> getEntry(final String entryId)
   {
     return connector.retryWithHandle(
@@ -176,7 +202,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           public Optional<EntryType> withHandle(Handle handle) throws Exception
           {
             byte[] res = handle.createQuery(
-                String.format("SELECT payload FROM %s WHERE id = :id", entryTable)
+                StringUtils.format("SELECT payload FROM %s WHERE id = :id", entryTable)
             )
                                .bind("id", entryId)
                                .map(ByteArrayMapper.FIRST)
@@ -191,6 +217,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
 
   }
 
+  @Override
   public Optional<StatusType> getStatus(final String entryId)
   {
     return connector.retryWithHandle(
@@ -200,7 +227,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           public Optional<StatusType> withHandle(Handle handle) throws Exception
           {
             byte[] res = handle.createQuery(
-                String.format("SELECT status_payload FROM %s WHERE id = :id", entryTable)
+                StringUtils.format("SELECT status_payload FROM %s WHERE id = :id", entryTable)
             )
                                .bind("id", entryId)
                                .map(ByteArrayMapper.FIRST)
@@ -214,6 +241,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     );
   }
 
+  @Override
   public List<Pair<EntryType, StatusType>> getActiveEntriesWithStatus()
   {
     return connector.retryWithHandle(
@@ -224,7 +252,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           {
             return handle
                 .createQuery(
-                    String.format(
+                    StringUtils.format(
                         "SELECT id, payload, status_payload FROM %s WHERE active = TRUE ORDER BY created_date",
                         entryTable
                     )
@@ -261,47 +289,63 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
 
   }
 
-  public List<StatusType> getInactiveStatusesSince(final DateTime timestamp)
+  @Override
+  public List<StatusType> getInactiveStatusesSince(DateTime timestamp, @Nullable Integer maxNumStatuses)
   {
-    return connector.retryWithHandle(
-        new HandleCallback<List<StatusType>>()
-        {
-          @Override
-          public List<StatusType> withHandle(Handle handle) throws Exception
-          {
-            return handle
-                .createQuery(
-                    String.format(
-                        "SELECT id, status_payload FROM %s WHERE active = FALSE AND created_date >= :start ORDER BY created_date DESC",
-                        entryTable
-                    )
-                ).bind("start", timestamp.toString())
-                .map(
-                    new ResultSetMapper<StatusType>()
-                    {
-                      @Override
-                      public StatusType map(int index, ResultSet r, StatementContext ctx) throws SQLException
-                      {
-                        try {
-                          return jsonMapper.readValue(
-                              r.getBytes("status_payload"),
-                              statusType
-                          );
-                        }
-                        catch (IOException e) {
-                          log.makeAlert(e, "Failed to parse status payload")
-                             .addData("entry", r.getString("id"))
-                             .emit();
-                          throw new SQLException(e);
-                        }
-                      }
+    return getConnector().retryWithHandle(
+        handle -> {
+          final Query<Map<String, Object>> query = createInactiveStatusesSinceQuery(handle, timestamp, maxNumStatuses);
+
+          return query
+              .map(
+                  (ResultSetMapper<StatusType>) (index, r, ctx) -> {
+                    try {
+                      return getJsonMapper().readValue(
+                          r.getBytes("status_payload"),
+                          getStatusType()
+                      );
                     }
-                ).list();
-          }
+                    catch (IOException e) {
+                      log.makeAlert(e, "Failed to parse status payload")
+                         .addData("entry", r.getString("id"))
+                         .emit();
+                      throw new SQLException(e);
+                    }
+                  }
+              ).list();
         }
     );
   }
 
+  protected abstract Query<Map<String, Object>> createInactiveStatusesSinceQuery(
+      Handle handle,
+      DateTime timestamp,
+      @Nullable Integer maxNumStatuses
+  );
+
+  @Override
+  @Nullable
+  public Pair<DateTime, String> getCreatedDateAndDataSource(String entryId)
+  {
+    return connector.retryWithHandle(
+        handle -> handle
+        .createQuery(
+            StringUtils.format(
+                "SELECT created_date, datasource FROM %s WHERE id = :entryId",
+                entryTable
+            )
+        )
+        .bind("entryId", entryId)
+        .map(
+            (index, resultSet, ctx) -> Pair.of(
+                DateTimes.of(resultSet.getString("created_date")), resultSet.getString("datasource")
+            )
+        )
+        .first()
+    );
+  }
+
+  @Override
   public boolean addLock(final String entryId, final LockType lock)
   {
     return connector.retryWithHandle(
@@ -310,20 +354,47 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           @Override
           public Boolean withHandle(Handle handle) throws Exception
           {
-            return handle.createStatement(
-                String.format(
-                    "INSERT INTO %1$s (%2$s_id, lock_payload) VALUES (:entryId, :payload)",
-                    lockTable, entryTypeName
-                )
-            )
-                         .bind("entryId", entryId)
-                         .bind("payload", jsonMapper.writeValueAsBytes(lock))
-                         .execute() == 1;
+            return addLock(handle, entryId, lock);
           }
         }
     );
   }
 
+  private boolean addLock(Handle handle, String entryId, LockType lock) throws JsonProcessingException
+  {
+    final String statement = StringUtils.format(
+        "INSERT INTO %1$s (%2$s_id, lock_payload) VALUES (:entryId, :payload)",
+        lockTable, entryTypeName
+    );
+    return handle.createStatement(statement)
+                 .bind("entryId", entryId)
+                 .bind("payload", jsonMapper.writeValueAsBytes(lock))
+                 .execute() == 1;
+  }
+
+  @Override
+  public boolean replaceLock(final String entryId, final long oldLockId, final LockType newLock)
+  {
+    return connector.retryTransaction(
+        (handle, transactionStatus) -> {
+          int numDeletedRows = removeLock(handle, oldLockId);
+
+          if (numDeletedRows != 1) {
+            transactionStatus.setRollbackOnly();
+            final String message = numDeletedRows == 0 ?
+                                   StringUtils.format("Cannot find lock[%d]", oldLockId) :
+                                   StringUtils.format("Found multiple locks for lockId[%d]", oldLockId);
+            throw new RuntimeException(message);
+          }
+
+          return addLock(handle, entryId, newLock);
+        },
+        3,
+        SQLMetadataConnector.DEFAULT_MAX_TRIES
+    );
+  }
+
+  @Override
   public void removeLock(final long lockId)
   {
     connector.retryWithHandle(
@@ -332,9 +403,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           @Override
           public Void withHandle(Handle handle) throws Exception
           {
-            handle.createStatement(String.format("DELETE FROM %s WHERE id = :id", lockTable))
-                  .bind("id", lockId)
-                  .execute();
+            removeLock(handle, lockId);
 
             return null;
           }
@@ -342,6 +411,14 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     );
   }
 
+  private int removeLock(Handle handle, long lockId)
+  {
+    return handle.createStatement(StringUtils.format("DELETE FROM %s WHERE id = :id", lockTable))
+                 .bind("id", lockId)
+                 .execute();
+  }
+
+  @Override
   public boolean addLog(final String entryId, final LogType log)
   {
     return connector.retryWithHandle(
@@ -351,7 +428,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           public Boolean withHandle(Handle handle) throws Exception
           {
             return handle.createStatement(
-                String.format(
+                StringUtils.format(
                     "INSERT INTO %1$s (%2$s_id, log_payload) VALUES (:entryId, :payload)",
                     logTable, entryTypeName
                 )
@@ -364,6 +441,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     );
   }
 
+  @Override
   public List<LogType> getLogs(final String entryId)
   {
     return connector.retryWithHandle(
@@ -374,7 +452,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           {
             return handle
                 .createQuery(
-                    String.format(
+                    StringUtils.format(
                         "SELECT log_payload FROM %1$s WHERE %2$s_id = :entryId",
                         logTable, entryTypeName
                     )
@@ -413,6 +491,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
     );
   }
 
+  @Override
   public Map<Long, LockType> getLocks(final String entryId)
   {
     return connector.retryWithHandle(
@@ -422,7 +501,7 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           public Map<Long, LockType> withHandle(Handle handle) throws Exception
           {
             return handle.createQuery(
-                String.format(
+                StringUtils.format(
                     "SELECT id, lock_payload FROM %1$s WHERE %2$s_id = :entryId",
                     lockTable, entryTypeName
                 )
@@ -476,5 +555,16 @@ public class SQLMetadataStorageActionHandler<EntryType, StatusType, LogType, Loc
           }
         }
     );
+  }
+
+  @Override
+  @Nullable
+  public Long getLockId(String entryId, LockType lock)
+  {
+    return getLocks(entryId).entrySet().stream()
+                            .filter(entry -> entry.getValue().equals(lock))
+                            .map(Entry::getKey)
+                            .findAny()
+                            .orElse(null);
   }
 }

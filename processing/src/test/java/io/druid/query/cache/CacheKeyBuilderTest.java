@@ -21,11 +21,8 @@ package io.druid.query.cache;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
-import com.google.common.primitives.Doubles;
-import com.google.common.primitives.Floats;
-import com.google.common.primitives.Ints;
-import io.druid.common.utils.StringUtils;
 import io.druid.java.util.common.Cacheable;
+import io.druid.java.util.common.StringUtils;
 import org.junit.Test;
 
 import java.nio.ByteBuffer;
@@ -67,14 +64,14 @@ public class CacheKeyBuilderTest
     final int expectedSize = 1                                           // id
                              + 1                                         // bool
                              + 4                                         // 'test'
-                             + Ints.BYTES                                // 10
-                             + Floats.BYTES                              // 0.1f
-                             + Doubles.BYTES                             // 2.3
+                             + Integer.BYTES                             // 10
+                             + Float.BYTES                               // 0.1f
+                             + Double.BYTES                              // 2.3
                              + CacheKeyBuilder.STRING_SEPARATOR.length   // byte array
-                             + Floats.BYTES * 2                          // 10.0f, 11.0f
-                             + Ints.BYTES + 5 * 2 + 1                    // 'test1' 'test2'
+                             + Float.BYTES * 2                           // 10.0f, 11.0f
+                             + Integer.BYTES + 5 * 2 + 1                 // 'test1' 'test2'
                              + cacheable.getCacheKey().length            // cacheable
-                             + Ints.BYTES + 4                                // cacheable list
+                             + Integer.BYTES + 4                         // cacheable list
                              + 11;                                       // type keys
     assertEquals(expectedSize, actual.length);
 
@@ -228,7 +225,7 @@ public class CacheKeyBuilderTest
       @Override
       public byte[] getCacheKey()
       {
-        return "test".getBytes();
+        return StringUtils.toUtf8("test");
       }
     };
 
@@ -237,7 +234,7 @@ public class CacheKeyBuilderTest
       @Override
       public byte[] getCacheKey()
       {
-        return "testtest".getBytes();
+        return StringUtils.toUtf8("testtest");
       }
     };
 
@@ -286,11 +283,9 @@ public class CacheKeyBuilderTest
 
   private static void assertNotEqualsEachOther(List<byte[]> keys)
   {
-    for (byte[] k1 : keys) {
-      for (byte[] k2 : keys) {
-        if (k1 != k2) {
-          assertFalse(Arrays.equals(k1, k2));
-        }
+    for (int i = 0; i < keys.size(); i++) {
+      for (int j = i + 1; j < keys.size(); j++) {
+        assertFalse(Arrays.equals(keys.get(i), keys.get(j)));
       }
     }
   }
@@ -358,7 +353,7 @@ public class CacheKeyBuilderTest
       @Override
       public byte[] getCacheKey()
       {
-        return "te".getBytes();
+        return StringUtils.toUtf8("te");
       }
     };
 
@@ -367,7 +362,7 @@ public class CacheKeyBuilderTest
       @Override
       public byte[] getCacheKey()
       {
-        return "test1".getBytes();
+        return StringUtils.toUtf8("test1");
       }
     };
 
@@ -376,7 +371,7 @@ public class CacheKeyBuilderTest
       @Override
       public byte[] getCacheKey()
       {
-        return "test2".getBytes();
+        return StringUtils.toUtf8("test2");
       }
     };
 

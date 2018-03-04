@@ -20,6 +20,7 @@
 package io.druid.math.expr;
 
 import com.google.common.collect.ImmutableMap;
+import io.druid.common.config.NullHandling;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -43,7 +44,7 @@ public class EvalTest
 
   private ExprEval eval(String x, Expr.ObjectBinding bindings)
   {
-    return Parser.parse(x).eval(bindings);
+    return Parser.parse(x, ExprMacroTable.nil()).eval(bindings);
   }
 
   @Test
@@ -139,8 +140,11 @@ public class EvalTest
     Assert.assertEquals(1271055781L, evalLong("unix_timestamp('2010-04-12T07:03:01')", bindings));
     Assert.assertEquals(1271023381L, evalLong("unix_timestamp('2010-04-12T07:03:01+09:00')", bindings));
     Assert.assertEquals(1271023381L, evalLong("unix_timestamp('2010-04-12T07:03:01.419+09:00')", bindings));
-
-    Assert.assertEquals("NULL", eval("nvl(if(x == 9223372036854775807, '', 'x'), 'NULL')", bindings).asString());
+    if (NullHandling.replaceWithDefault()) {
+      Assert.assertEquals("NULL", eval("nvl(if(x == 9223372036854775807, '', 'x'), 'NULL')", bindings).asString());
+    } else {
+      Assert.assertEquals("", eval("nvl(if(x == 9223372036854775807, '', 'x'), 'NULL')", bindings).asString());
+    }
     Assert.assertEquals("x", eval("nvl(if(x == 9223372036854775806, '', 'x'), 'NULL')", bindings).asString());
   }
 
@@ -150,27 +154,27 @@ public class EvalTest
     Expr.ObjectBinding bindings = Parser.withMap(
         ImmutableMap.of("x", 100L, "y", 100L, "z", 100D, "w", 100D)
     );
-    ExprEval eval = Parser.parse("x==y").eval(bindings);
+    ExprEval eval = Parser.parse("x==y", ExprMacroTable.nil()).eval(bindings);
     Assert.assertTrue(eval.asBoolean());
     Assert.assertEquals(ExprType.LONG, eval.type());
 
-    eval = Parser.parse("x!=y").eval(bindings);
+    eval = Parser.parse("x!=y", ExprMacroTable.nil()).eval(bindings);
     Assert.assertFalse(eval.asBoolean());
     Assert.assertEquals(ExprType.LONG, eval.type());
 
-    eval = Parser.parse("x==z").eval(bindings);
+    eval = Parser.parse("x==z", ExprMacroTable.nil()).eval(bindings);
     Assert.assertTrue(eval.asBoolean());
     Assert.assertEquals(ExprType.DOUBLE, eval.type());
 
-    eval = Parser.parse("x!=z").eval(bindings);
+    eval = Parser.parse("x!=z", ExprMacroTable.nil()).eval(bindings);
     Assert.assertFalse(eval.asBoolean());
     Assert.assertEquals(ExprType.DOUBLE, eval.type());
 
-    eval = Parser.parse("z==w").eval(bindings);
+    eval = Parser.parse("z==w", ExprMacroTable.nil()).eval(bindings);
     Assert.assertTrue(eval.asBoolean());
     Assert.assertEquals(ExprType.DOUBLE, eval.type());
 
-    eval = Parser.parse("z!=w").eval(bindings);
+    eval = Parser.parse("z!=w", ExprMacroTable.nil()).eval(bindings);
     Assert.assertFalse(eval.asBoolean());
     Assert.assertEquals(ExprType.DOUBLE, eval.type());
   }

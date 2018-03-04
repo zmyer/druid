@@ -38,24 +38,31 @@ public class DefaultGroupByQueryMetrics extends DefaultQueryMetrics<GroupByQuery
     numDimensions(query);
     numMetrics(query);
     numComplexMetrics(query);
+    granularity(query);
   }
 
   @Override
   public void numDimensions(GroupByQuery query)
   {
-    builder.setDimension("numDimensions", String.valueOf(query.getDimensions().size()));
+    setDimension("numDimensions", String.valueOf(query.getDimensions().size()));
   }
 
   @Override
   public void numMetrics(GroupByQuery query)
   {
-    builder.setDimension("numMetrics", String.valueOf(query.getAggregatorSpecs().size()));
+    setDimension("numMetrics", String.valueOf(query.getAggregatorSpecs().size()));
   }
 
   @Override
   public void numComplexMetrics(GroupByQuery query)
   {
     int numComplexAggs = DruidMetrics.findNumComplexAggs(query.getAggregatorSpecs());
-    builder.setDimension("numComplexMetrics", String.valueOf(numComplexAggs));
+    setDimension("numComplexMetrics", String.valueOf(numComplexAggs));
+  }
+
+  @Override
+  public void granularity(GroupByQuery query)
+  {
+    //Don't emit by default
   }
 }

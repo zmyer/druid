@@ -21,10 +21,12 @@ package io.druid.indexing.kafka.supervisor;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import io.druid.indexing.kafka.KafkaTuningConfig;
+import io.druid.segment.writeout.SegmentWriteOutMediumFactory;
 import io.druid.segment.IndexSpec;
 import org.joda.time.Duration;
 import org.joda.time.Period;
 
+import javax.annotation.Nullable;
 import java.io.File;
 
 public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
@@ -34,6 +36,7 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
   private final Long chatRetries;
   private final Duration httpTimeout;
   private final Duration shutdownTimeout;
+  private final Duration offsetFetchPeriod;
 
   public KafkaSupervisorTuningConfig(
       @JsonProperty("maxRowsInMemory") Integer maxRowsInMemory,
@@ -42,15 +45,19 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
       @JsonProperty("basePersistDirectory") File basePersistDirectory,
       @JsonProperty("maxPendingPersists") Integer maxPendingPersists,
       @JsonProperty("indexSpec") IndexSpec indexSpec,
+      // This parameter is left for compatibility when reading existing configs, to be removed in Druid 0.12.
       @JsonProperty("buildV9Directly") Boolean buildV9Directly,
       @JsonProperty("reportParseExceptions") Boolean reportParseExceptions,
       @JsonProperty("handoffConditionTimeout") Long handoffConditionTimeout,
       @JsonProperty("resetOffsetAutomatically") Boolean resetOffsetAutomatically,
+      @JsonProperty("segmentWriteOutMediumFactory") @Nullable SegmentWriteOutMediumFactory segmentWriteOutMediumFactory,
       @JsonProperty("workerThreads") Integer workerThreads,
       @JsonProperty("chatThreads") Integer chatThreads,
       @JsonProperty("chatRetries") Long chatRetries,
       @JsonProperty("httpTimeout") Period httpTimeout,
-      @JsonProperty("shutdownTimeout") Period shutdownTimeout
+      @JsonProperty("shutdownTimeout") Period shutdownTimeout,
+      @JsonProperty("offsetFetchPeriod") Period offsetFetchPeriod,
+      @JsonProperty("intermediateHandoffPeriod") Period intermediateHandoffPeriod
   )
   {
     super(
@@ -60,10 +67,12 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
         basePersistDirectory,
         maxPendingPersists,
         indexSpec,
-        buildV9Directly,
+        true,
         reportParseExceptions,
         handoffConditionTimeout,
-        resetOffsetAutomatically
+        resetOffsetAutomatically,
+        segmentWriteOutMediumFactory,
+        intermediateHandoffPeriod
     );
 
     this.workerThreads = workerThreads;
@@ -71,6 +80,7 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
     this.chatRetries = (chatRetries != null ? chatRetries : 8);
     this.httpTimeout = defaultDuration(httpTimeout, "PT10S");
     this.shutdownTimeout = defaultDuration(shutdownTimeout, "PT80S");
+    this.offsetFetchPeriod = defaultDuration(offsetFetchPeriod, "PT30S");
   }
 
   @JsonProperty
@@ -103,6 +113,12 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
     return shutdownTimeout;
   }
 
+  @JsonProperty
+  public Duration getOffsetFetchPeriod()
+  {
+    return offsetFetchPeriod;
+  }
+
   @Override
   public String toString()
   {
@@ -113,15 +129,17 @@ public class KafkaSupervisorTuningConfig extends KafkaTuningConfig
            ", basePersistDirectory=" + getBasePersistDirectory() +
            ", maxPendingPersists=" + getMaxPendingPersists() +
            ", indexSpec=" + getIndexSpec() +
-           ", buildV9Directly=" + getBuildV9Directly() +
            ", reportParseExceptions=" + isReportParseExceptions() +
            ", handoffConditionTimeout=" + getHandoffConditionTimeout() +
            ", resetOffsetAutomatically=" + isResetOffsetAutomatically() +
+           ", segmentWriteOutMediumFactory=" + getSegmentWriteOutMediumFactory() +
            ", workerThreads=" + workerThreads +
            ", chatThreads=" + chatThreads +
            ", chatRetries=" + chatRetries +
            ", httpTimeout=" + httpTimeout +
            ", shutdownTimeout=" + shutdownTimeout +
+           ", offsetFetchPeriod=" + offsetFetchPeriod +
+           ", intermediateHandoffPeriod=" + getIntermediateHandoffPeriod() +
            '}';
   }
 

@@ -22,7 +22,6 @@ package io.druid.java.util.common.guava;
 import com.google.common.base.Function;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Predicate;
-import com.google.common.collect.Lists;
 
 import java.io.Closeable;
 import java.util.Arrays;
@@ -75,14 +74,14 @@ public class Sequences
     return concat(Sequences.simple(sequences));
   }
 
-  public static <T> Sequence<T> concat(Sequence<Sequence<T>> sequences)
+  public static <T> Sequence<T> concat(Sequence<? extends Sequence<T>> sequences)
   {
     return new ConcatSequence<>(sequences);
   }
 
-  public static <From, To> Sequence<To> map(Sequence<From> sequence, Function<From, To> fn)
+  public static <From, To> Sequence<To> map(Sequence<From> sequence, Function<? super From, ? extends To> fn)
   {
-    return new MappedSequence<>(sequence, fn);
+    return new MappedSequence<>(sequence, fn::apply);
   }
 
   public static <T> Sequence<T> filter(Sequence<T> sequence, Predicate<T> pred)
@@ -140,14 +139,9 @@ public class Sequences
   // This will materialize the entire sequence in memory. Use at your own risk.
   public static <T> Sequence<T> sort(final Sequence<T> sequence, final Comparator<T> comparator)
   {
-    List<T> seqList = Sequences.toList(sequence, Lists.<T>newArrayList());
+    List<T> seqList = sequence.toList();
     Collections.sort(seqList, comparator);
     return simple(seqList);
-  }
-
-  public static <T, ListType extends List<T>> ListType toList(Sequence<T> seq, ListType list)
-  {
-    return seq.accumulate(list, Accumulators.<ListType, T>list());
   }
 
   private static class EmptySequence implements Sequence<Object>

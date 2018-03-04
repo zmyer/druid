@@ -34,10 +34,11 @@ import java.util.Objects;
 public class SingleScanTimeDimSelector implements DimensionSelector
 {
   private final ExtractionFn extractionFn;
-  private final LongColumnSelector selector;
+  private final BaseLongColumnValueSelector selector;
   private final boolean descending;
 
   private final List<String> timeValues = new ArrayList<>();
+  private final SingleIndexedInt row = new SingleIndexedInt();
   private String currentValue = null;
   private long currentTimestamp = Long.MIN_VALUE;
   private int index = -1;
@@ -47,7 +48,7 @@ public class SingleScanTimeDimSelector implements DimensionSelector
   // - it assumes time values are scanned once and values are grouped together
   //   (i.e. we never revisit a timestamp we have seen before, unless it is the same as the last accessed one)
   // - it also applies and caches extraction function values at the DimSelector level to speed things up
-  public SingleScanTimeDimSelector(LongColumnSelector selector, ExtractionFn extractionFn, boolean descending)
+  public SingleScanTimeDimSelector(BaseLongColumnValueSelector selector, ExtractionFn extractionFn, boolean descending)
   {
     if (extractionFn == null) {
       throw new UnsupportedOperationException("time dimension must provide an extraction function");
@@ -61,7 +62,8 @@ public class SingleScanTimeDimSelector implements DimensionSelector
   @Override
   public IndexedInts getRow()
   {
-    return new SingleIndexedInt(getDimensionValueIndex());
+    row.setValue(getDimensionValueIndex());
+    return row;
   }
 
   @Override
@@ -73,6 +75,12 @@ public class SingleScanTimeDimSelector implements DimensionSelector
       public boolean matches()
       {
         return Objects.equals(lookupName(getDimensionValueIndex()), value);
+      }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        inspector.visit("selector", SingleScanTimeDimSelector.this);
       }
     };
   }
@@ -87,27 +95,33 @@ public class SingleScanTimeDimSelector implements DimensionSelector
       {
         return predicate.apply(lookupName(getDimensionValueIndex()));
       }
+
+      @Override
+      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
+      {
+        inspector.visit("selector", SingleScanTimeDimSelector.this);
+        inspector.visit("predicate", predicate);
+      }
     };
   }
 
   private int getDimensionValueIndex()
   {
     // if this the first timestamp, apply and cache extraction function result
-    final long timestamp = selector.get();
+    final long timestamp = selector.getLong();
     if (index < 0) {
       currentTimestamp = timestamp;
       currentValue = extractionFn.apply(timestamp);
       ++index;
       timeValues.add(currentValue);
-    }
-    // if this is a new timestamp, apply and cache extraction function result
-    // since timestamps are assumed grouped and scanned once, we only need to
-    // check if the current timestamp is different than the current timestamp.
-    //
-    // If this new timestamp is mapped to the same value by the extraction function,
-    // we can also avoid creating a dimension value and corresponding index
-    // and use the current one
-    else if (timestamp != currentTimestamp) {
+      // if this is a new timestamp, apply and cache extraction function result
+      // since timestamps are assumed grouped and scanned once, we only need to
+      // check if the current timestamp is different than the current timestamp.
+      //
+      // If this new timestamp is mapped to the same value by the extraction function,
+      // we can also avoid creating a dimension value and corresponding index
+      // and use the current one
+    } else if (timestamp != currentTimestamp) {
       if (descending ? timestamp > currentTimestamp : timestamp < currentTimestamp) {
         // re-using this selector for multiple scans would cause the same rows to return different IDs
         // we might want to re-visit if we ever need to do multiple scans with this dimension selector
@@ -156,6 +170,19 @@ public class SingleScanTimeDimSelector implements DimensionSelector
   public IdLookup idLookup()
   {
     return null;
+  }
+
+  @Nullable
+  @Override
+  public Object getObject()
+  {
+    return currentValue;
+  }
+
+  @Override
+  public Class classOfObject()
+  {
+    return String.class;
   }
 
   @Override

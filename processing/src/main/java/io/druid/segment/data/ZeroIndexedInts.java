@@ -19,17 +19,14 @@
 
 package io.druid.segment.data;
 
-import it.unimi.dsi.fastutil.ints.IntIterator;
-import it.unimi.dsi.fastutil.ints.IntIterators;
-
-import java.io.IOException;
+import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
 
 /**
  * An IndexedInts that always returns a row containing a single zero.
  */
 public class ZeroIndexedInts implements IndexedInts
 {
-  private final static ZeroIndexedInts INSTANCE = new ZeroIndexedInts();
+  private static final ZeroIndexedInts INSTANCE = new ZeroIndexedInts();
 
   private ZeroIndexedInts()
   {
@@ -56,20 +53,8 @@ public class ZeroIndexedInts implements IndexedInts
   }
 
   @Override
-  public void fill(int index, int[] toFill)
+  public void inspectRuntimeShape(RuntimeShapeInspector inspector)
   {
-    throw new UnsupportedOperationException("fill");
-  }
-
-  @Override
-  public IntIterator iterator()
-  {
-    return IntIterators.singleton(0);
-  }
-
-  @Override
-  public void close() throws IOException
-  {
-
+    // nothing to inspect
   }
 }

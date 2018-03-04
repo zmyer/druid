@@ -22,17 +22,21 @@ package io.druid.data.input.impl;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Charsets;
-
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Iterators;
 import io.druid.data.input.ByteBufferInputRowParser;
 import io.druid.data.input.InputRow;
+import io.druid.java.util.common.collect.Utils;
 import io.druid.java.util.common.parsers.ParseException;
 import io.druid.java.util.common.parsers.Parser;
 
+import javax.annotation.Nullable;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.CoderResult;
 import java.nio.charset.CodingErrorAction;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,10 +47,10 @@ public class StringInputRowParser implements ByteBufferInputRowParser
 
   private final ParseSpec parseSpec;
   private final MapInputRowParser mapParser;
-  private final Parser<String, Object> parser;
   private final Charset charset;
 
-  private CharBuffer chars = null;
+  private Parser<String, Object> parser;
+  private CharBuffer chars;
 
   @JsonCreator
   public StringInputRowParser(
@@ -54,9 +58,8 @@ public class StringInputRowParser implements ByteBufferInputRowParser
       @JsonProperty("encoding") String encoding
   )
   {
-    this.parseSpec = parseSpec;
+    this.parseSpec = Preconditions.checkNotNull(parseSpec, "parseSpec");
     this.mapParser = new MapInputRowParser(parseSpec);
-    this.parser = parseSpec.makeParser();
 
     if (encoding != null) {
       this.charset = Charset.forName(encoding);
@@ -72,9 +75,9 @@ public class StringInputRowParser implements ByteBufferInputRowParser
   }
 
   @Override
-  public InputRow parse(ByteBuffer input)
+  public List<InputRow> parseBatch(ByteBuffer input)
   {
-    return parseMap(buildStringKeyMap(input));
+    return Utils.nullableListOf(parseMap(buildStringKeyMap(input)));
   }
 
   @JsonProperty
@@ -124,18 +127,41 @@ public class StringInputRowParser implements ByteBufferInputRowParser
     return theMap;
   }
 
-  private Map<String, Object> parseString(String inputString)
+  public void initializeParser()
   {
-    return parser.parse(inputString);
+    if (parser == null) {
+      // parser should be created when it is really used to avoid unnecessary initialization of the underlying
+      // parseSpec.
+      parser = parseSpec.makeParser();
+    }
   }
 
-  public InputRow parse(String input)
+  public void startFileFromBeginning()
+  {
+    initializeParser();
+    parser.startFileFromBeginning();
+  }
+
+  @Nullable
+  public InputRow parse(@Nullable String input)
   {
     return parseMap(parseString(input));
   }
 
-  private InputRow parseMap(Map<String, Object> theMap)
+  @Nullable
+  private Map<String, Object> parseString(@Nullable String inputString)
   {
-    return mapParser.parse(theMap);
+    initializeParser();
+    return parser.parseToMap(inputString);
+  }
+
+  @Nullable
+  private InputRow parseMap(@Nullable Map<String, Object> theMap)
+  {
+    // If a header is present in the data (and with proper configurations), a null is returned
+    if (theMap == null) {
+      return null;
+    }
+    return Iterators.getOnlyElement(mapParser.parseBatch(theMap).iterator());
   }
 }

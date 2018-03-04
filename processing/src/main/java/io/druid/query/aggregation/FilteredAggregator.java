@@ -41,12 +41,6 @@ public class FilteredAggregator implements Aggregator
   }
 
   @Override
-  public void reset()
-  {
-    delegate.reset();
-  }
-
-  @Override
   public Object get()
   {
     return delegate.get();
@@ -62,6 +56,12 @@ public class FilteredAggregator implements Aggregator
   public long getLong()
   {
     return delegate.getLong();
+  }
+
+  @Override
+  public double getDouble()
+  {
+    return delegate.getDouble();
   }
 
   @Override

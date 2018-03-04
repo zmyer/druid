@@ -20,6 +20,7 @@
 package io.druid.java.util.common.parsers;
 
 import com.google.common.collect.Maps;
+import io.druid.java.util.common.StringUtils;
 
 import java.util.List;
 import java.util.Map;
@@ -36,14 +37,14 @@ public class ToLowerCaseParser implements Parser<String, Object>
   }
 
   @Override
-  public Map parse(String input)
+  public Map parseToMap(String input)
   {
-    Map<String, Object> line = baseParser.parse(input);
+    Map<String, Object> line = baseParser.parseToMap(input);
     Map<String, Object> retVal = Maps.newLinkedHashMap();
     for (Map.Entry<String, Object> entry : line.entrySet()) {
-      String k = entry.getKey().toLowerCase();
+      String k = StringUtils.toLowerCase(entry.getKey());
 
-      if(retVal.containsKey(k)) {
+      if (retVal.containsKey(k)) {
         // Duplicate key, case-insensitively
         throw new ParseException("Unparseable row. Duplicate key found : [%s]", k);
       }
@@ -51,6 +52,12 @@ public class ToLowerCaseParser implements Parser<String, Object>
       retVal.put(k, entry.getValue());
     }
     return retVal;
+  }
+
+  @Override
+  public void startFileFromBeginning()
+  {
+    baseParser.startFileFromBeginning();
   }
 
   @Override

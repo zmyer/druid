@@ -25,10 +25,9 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.primitives.Ints;
 import com.google.inject.Inject;
+import io.druid.collections.NonBlockingPool;
 import io.druid.collections.ResourceHolder;
-import io.druid.collections.StupidPool;
 import io.druid.data.input.MapBasedRow;
 import io.druid.data.input.Row;
 import io.druid.guice.annotations.Global;
@@ -71,12 +70,12 @@ public class GroupByQueryEngine
   private static final int MISSING_VALUE = -1;
 
   private final Supplier<GroupByQueryConfig> config;
-  private final StupidPool<ByteBuffer> intermediateResultsBufferPool;
+  private final NonBlockingPool<ByteBuffer> intermediateResultsBufferPool;
 
   @Inject
   public GroupByQueryEngine(
       Supplier<GroupByQueryConfig> config,
-      @Global StupidPool<ByteBuffer> intermediateResultsBufferPool
+      @Global NonBlockingPool<ByteBuffer> intermediateResultsBufferPool
   )
   {
     this.config = config;
@@ -103,7 +102,8 @@ public class GroupByQueryEngine
         intervals.get(0),
         query.getVirtualColumns(),
         query.getGranularity(),
-        false
+        false,
+        null
     );
 
     final ResourceHolder<ByteBuffer> bufferHolder = intermediateResultsBufferPool.take();
@@ -195,8 +195,9 @@ public class GroupByQueryEngine
           newKey.putInt(MISSING_VALUE);
           unaggregatedBuffers = updateValues(newKey, dims.subList(1, dims.size()));
         } else {
-          for (Integer dimValue : row) {
+          for (int i = 0; i < row.size(); i++) {
             ByteBuffer newKey = key.duplicate();
+            int dimValue = row.get(i);
             newKey.putInt(dimValue);
             unaggregatedBuffers = updateValues(newKey, dims.subList(1, dims.size()));
           }
@@ -261,8 +262,8 @@ public class GroupByQueryEngine
       this.increments = increments;
 
       int theIncrement = 0;
-      for (int i = 0; i < increments.length; i++) {
-        theIncrement += increments[i];
+      for (int inc : increments) {
+        theIncrement += inc;
       }
       increment = theIncrement;
 
@@ -324,15 +325,14 @@ public class GroupByQueryEngine
       dimensions = Lists.newArrayListWithExpectedSize(dimensionSpecs.size());
       dimNames = Lists.newArrayListWithExpectedSize(dimensionSpecs.size());
 
-      for (int i = 0; i < dimensionSpecs.size(); ++i) {
-        final DimensionSpec dimSpec = dimensionSpecs.get(i);
+      for (final DimensionSpec dimSpec : dimensionSpecs) {
         if (dimSpec.getOutputType() != ValueType.STRING) {
           throw new UnsupportedOperationException(
               "GroupBy v1 only supports dimensions with an outputType of STRING."
           );
         }
 
-        final DimensionSelector selector = cursor.makeDimensionSelector(dimSpec);
+        final DimensionSelector selector = cursor.getColumnSelectorFactory().makeDimensionSelector(dimSpec);
         if (selector != null) {
           if (selector.getValueCardinality() == DimensionSelector.CARDINALITY_UNKNOWN) {
             throw new UnsupportedOperationException(
@@ -349,7 +349,7 @@ public class GroupByQueryEngine
       sizesRequired = new int[aggregatorSpecs.size()];
       for (int i = 0; i < aggregatorSpecs.size(); ++i) {
         AggregatorFactory aggregatorSpec = aggregatorSpecs.get(i);
-        aggregators[i] = aggregatorSpec.factorizeBuffered(cursor);
+        aggregators[i] = aggregatorSpec.factorizeBuffered(cursor.getColumnSelectorFactory());
         metricNames[i] = aggregatorSpec.getName();
         sizesRequired[i] = aggregatorSpec.getMaxIntermediateSize();
       }
@@ -384,7 +384,7 @@ public class GroupByQueryEngine
         cursor.advance();
       }
       while (!cursor.isDone() && rowUpdater.getNumRows() < maxIntermediateRows) {
-        ByteBuffer key = ByteBuffer.allocate(dimensions.size() * Ints.BYTES);
+        ByteBuffer key = ByteBuffer.allocate(dimensions.size() * Integer.BYTES);
 
         unprocessedKeys = rowUpdater.updateValues(key, dimensions);
         if (unprocessedKeys != null) {
@@ -447,6 +447,7 @@ public class GroupByQueryEngine
       throw new UnsupportedOperationException();
     }
 
+    @Override
     public void close()
     {
       // cleanup

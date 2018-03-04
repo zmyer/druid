@@ -23,11 +23,9 @@ import com.google.common.base.Optional;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Throwables;
 import com.google.inject.Inject;
-import com.metamx.emitter.EmittingLogger;
-
+import io.druid.java.util.emitter.EmittingLogger;
 import io.druid.indexing.overlord.DataSourceMetadata;
 import io.druid.java.util.common.Pair;
-import io.druid.java.util.common.collect.JavaCompatUtils;
 import io.druid.java.util.common.lifecycle.LifecycleStart;
 import io.druid.java.util.common.lifecycle.LifecycleStop;
 import io.druid.metadata.MetadataSupervisorManager;
@@ -59,7 +57,7 @@ public class SupervisorManager
 
   public Set<String> getSupervisorIds()
   {
-    return JavaCompatUtils.keySet(supervisors);
+    return supervisors.keySet();
   }
 
   public Optional<SupervisorSpec> getSupervisorSpec(String id)
@@ -117,7 +115,7 @@ public class SupervisorManager
     Preconditions.checkState(started, "SupervisorManager not started");
 
     synchronized (lock) {
-      for (String id : JavaCompatUtils.keySet(supervisors)) {
+      for (String id : supervisors.keySet()) {
         try {
           supervisors.get(id).lhs.stop(false);
         }
@@ -157,6 +155,31 @@ public class SupervisorManager
     supervisor.lhs.reset(dataSourceMetadata);
     return true;
   }
+
+  public boolean checkPointDataSourceMetadata(
+      String supervisorId,
+      @Nullable String sequenceName,
+      @Nullable DataSourceMetadata previousDataSourceMetadata,
+      @Nullable DataSourceMetadata currentDataSourceMetadata
+  )
+  {
+    try {
+      Preconditions.checkState(started, "SupervisorManager not started");
+      Preconditions.checkNotNull(supervisorId, "supervisorId cannot be null");
+
+      Pair<Supervisor, SupervisorSpec> supervisor = supervisors.get(supervisorId);
+
+      Preconditions.checkNotNull(supervisor, "supervisor could not be found");
+
+      supervisor.lhs.checkpoint(sequenceName, previousDataSourceMetadata, currentDataSourceMetadata);
+      return true;
+    }
+    catch (Exception e) {
+      log.error(e, "Checkpoint request failed");
+    }
+    return false;
+  }
+
 
   /**
    * Stops a supervisor with a given id and then removes it from the list.

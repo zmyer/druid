@@ -21,37 +21,33 @@ package io.druid.segment;
 
 import io.druid.collections.bitmap.BitmapFactory;
 import io.druid.collections.bitmap.MutableBitmap;
+import io.druid.common.config.NullHandling;
+import io.druid.java.util.common.guava.Comparators;
 import io.druid.query.dimension.DimensionSpec;
 import io.druid.query.monomorphicprocessing.RuntimeShapeInspector;
-import io.druid.segment.column.ValueType;
 import io.druid.segment.data.Indexed;
 import io.druid.segment.incremental.IncrementalIndex;
-import io.druid.segment.incremental.IncrementalIndexStorageAdapter;
+import io.druid.segment.incremental.TimeAndDimsHolder;
 
+import javax.annotation.Nullable;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 public class FloatDimensionIndexer implements DimensionIndexer<Float, Float, Float>
 {
-  @Override
-  public ValueType getValueType()
-  {
-    return ValueType.FLOAT;
-  }
+  public static final Comparator<Float> FLOAT_COMPARATOR = Comparators.<Float>naturalNullsFirst();
 
   @Override
-  public Float processRowValsToUnsortedEncodedKeyComponent(Object dimValues)
+  public Float processRowValsToUnsortedEncodedKeyComponent(Object dimValues, boolean reportParseExceptions)
   {
     if (dimValues instanceof List) {
       throw new UnsupportedOperationException("Numeric columns do not support multivalue rows.");
     }
 
-    return DimensionHandlerUtils.convertObjectToFloat(dimValues);
-  }
-
-  @Override
-  public Float getSortedEncodedValueFromUnsorted(Float unsortedIntermediateValue)
-  {
-    return unsortedIntermediateValue;
+    Float ret = DimensionHandlerUtils.convertObjectToFloat(dimValues, reportParseExceptions);
+    // remove null -> zero conversion when https://github.com/druid-io/druid/pull/5278 series of patches is merged
+    return ret == null ? DimensionHandlerUtils.ZERO_FLOAT : ret;
   }
 
   @Override
@@ -69,13 +65,13 @@ public class FloatDimensionIndexer implements DimensionIndexer<Float, Float, Flo
   @Override
   public Float getMinValue()
   {
-    return Float.MIN_VALUE;
+    return Float.NEGATIVE_INFINITY;
   }
 
   @Override
   public Float getMaxValue()
   {
-    return Float.MAX_VALUE;
+    return Float.POSITIVE_INFINITY;
   }
 
   @Override
@@ -86,62 +82,53 @@ public class FloatDimensionIndexer implements DimensionIndexer<Float, Float, Flo
 
   @Override
   public DimensionSelector makeDimensionSelector(
-      DimensionSpec spec, IncrementalIndexStorageAdapter.EntryHolder currEntry, IncrementalIndex.DimensionDesc desc
+      DimensionSpec spec,
+      TimeAndDimsHolder currEntry,
+      IncrementalIndex.DimensionDesc desc
   )
   {
-    return new FloatWrappingDimensionSelector(
-        makeFloatColumnSelector(currEntry, desc),
-        spec.getExtractionFn()
-    );
+    return new FloatWrappingDimensionSelector(makeColumnValueSelector(currEntry, desc), spec.getExtractionFn());
   }
 
   @Override
-  public LongColumnSelector makeLongColumnSelector(
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
-  )
-  {
-    final int dimIndex = desc.getIndex();
-    class IndexerLongColumnSelector implements LongColumnSelector
-    {
-      @Override
-      public long get()
-      {
-        final Object[] dims = currEntry.getKey().getDims();
-
-        if (dimIndex >= dims.length) {
-          return 0L;
-        }
-
-        float floatVal = (Float) dims[dimIndex];
-        return (long) floatVal;
-      }
-
-      @Override
-      public void inspectRuntimeShape(RuntimeShapeInspector inspector)
-      {
-      }
-    }
-
-    return new IndexerLongColumnSelector();
-  }
-
-  @Override
-  public FloatColumnSelector makeFloatColumnSelector(
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
+  public ColumnValueSelector<?> makeColumnValueSelector(
+      TimeAndDimsHolder currEntry,
+      IncrementalIndex.DimensionDesc desc
   )
   {
     final int dimIndex = desc.getIndex();
     class IndexerFloatColumnSelector implements FloatColumnSelector
     {
+
       @Override
-      public float get()
+      public boolean isNull()
       {
-        final Object[] dims = currEntry.getKey().getDims();
+        final Object[] dims = currEntry.get().getDims();
+        return dimIndex >= dims.length || dims[dimIndex] == null;
+      }
+
+      @Override
+      public float getFloat()
+      {
+        final Object[] dims = currEntry.get().getDims();
+
+        if (dimIndex >= dims.length || dims[dimIndex] == null) {
+          assert NullHandling.replaceWithDefault();
+          return 0.0f;
+        }
+
+        return (Float) dims[dimIndex];
+      }
+
+      @SuppressWarnings("deprecation")
+      @Nullable
+      @Override
+      public Float getObject()
+      {
+        final Object[] dims = currEntry.get().getDims();
 
         if (dimIndex >= dims.length) {
-          return 0L;
+          return null;
         }
 
         return (Float) dims[dimIndex];
@@ -150,6 +137,7 @@ public class FloatDimensionIndexer implements DimensionIndexer<Float, Float, Flo
       @Override
       public void inspectRuntimeShape(RuntimeShapeInspector inspector)
       {
+        // nothing to inspect
       }
     }
 
@@ -157,53 +145,21 @@ public class FloatDimensionIndexer implements DimensionIndexer<Float, Float, Flo
   }
 
   @Override
-  public ObjectColumnSelector makeObjectColumnSelector(
-      final DimensionSpec spec,
-      final IncrementalIndexStorageAdapter.EntryHolder currEntry,
-      final IncrementalIndex.DimensionDesc desc
-  )
+  public int compareUnsortedEncodedKeyComponents(@Nullable Float lhs, @Nullable Float rhs)
   {
-    final int dimIndex = desc.getIndex();
-    class IndexerObjectColumnSelector implements ObjectColumnSelector
-    {
-      @Override
-      public Class classOfObject()
-      {
-        return Float.class;
-      }
-
-      @Override
-      public Object get()
-      {
-        final Object[] dims = currEntry.getKey().getDims();
-
-        if (dimIndex >= dims.length) {
-          return 0L;
-        }
-
-        return dims[dimIndex];
-      }
-    }
-
-    return new IndexerObjectColumnSelector();
+    return FLOAT_COMPARATOR.compare(lhs, rhs);
   }
 
   @Override
-  public int compareUnsortedEncodedKeyComponents(Float lhs, Float rhs)
+  public boolean checkUnsortedEncodedKeyComponentsEqual(@Nullable Float lhs, @Nullable Float rhs)
   {
-    return lhs.compareTo(rhs);
+    return Objects.equals(lhs, rhs);
   }
 
   @Override
-  public boolean checkUnsortedEncodedKeyComponentsEqual(Float lhs, Float rhs)
+  public int getUnsortedEncodedKeyComponentHashCode(@Nullable Float key)
   {
-    return lhs.equals(rhs);
-  }
-
-  @Override
-  public int getUnsortedEncodedKeyComponentHashCode(Float key)
-  {
-    return key.hashCode();
+    return DimensionHandlerUtils.nullToZero(key).hashCode();
   }
 
   @Override

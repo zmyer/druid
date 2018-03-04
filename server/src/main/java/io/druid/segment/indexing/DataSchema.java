@@ -34,6 +34,7 @@ import io.druid.java.util.common.logger.Logger;
 import io.druid.query.aggregation.AggregatorFactory;
 import io.druid.segment.indexing.granularity.GranularitySpec;
 import io.druid.segment.indexing.granularity.UniformGranularitySpec;
+import io.druid.segment.transform.TransformSpec;
 
 import java.util.Arrays;
 import java.util.HashSet;
@@ -50,8 +51,11 @@ public class DataSchema
   private final Map<String, Object> parser;
   private final AggregatorFactory[] aggregators;
   private final GranularitySpec granularitySpec;
+  private final TransformSpec transformSpec;
 
   private final ObjectMapper jsonMapper;
+
+  private InputRowParser cachedParser;
 
   @JsonCreator
   public DataSchema(
@@ -59,26 +63,14 @@ public class DataSchema
       @JsonProperty("parser") Map<String, Object> parser,
       @JsonProperty("metricsSpec") AggregatorFactory[] aggregators,
       @JsonProperty("granularitySpec") GranularitySpec granularitySpec,
+      @JsonProperty("transformSpec") TransformSpec transformSpec,
       @JacksonInject ObjectMapper jsonMapper
   )
   {
     this.jsonMapper = Preconditions.checkNotNull(jsonMapper, "null ObjectMapper.");
     this.dataSource = Preconditions.checkNotNull(dataSource, "dataSource cannot be null. Please provide a dataSource.");
     this.parser = parser;
-
-    if (aggregators == null || aggregators.length == 0) {
-      log.warn("No metricsSpec has been specified. Are you sure this is what you want?");
-    } else {
-      //validate for no duplication
-      Set<String> names = new HashSet<>();
-      for (AggregatorFactory factory : aggregators) {
-        if (!names.add(factory.getName())) {
-          throw new IAE("duplicate aggregators found with name [%s].", factory.getName());
-        }
-      }
-    }
-
-    this.aggregators = aggregators;
+    this.transformSpec = transformSpec == null ? TransformSpec.NONE : transformSpec;
 
     if (granularitySpec == null) {
       log.warn("No granularitySpec has been specified. Using UniformGranularitySpec as default.");
@@ -86,6 +78,20 @@ public class DataSchema
     } else {
       this.granularitySpec = granularitySpec;
     }
+
+    if (aggregators != null && aggregators.length != 0) {
+      // validate for no duplication
+      Set<String> names = new HashSet<>();
+      for (AggregatorFactory factory : aggregators) {
+        if (!names.add(factory.getName())) {
+          throw new IAE("duplicate aggregators found with name [%s].", factory.getName());
+        }
+      }
+    } else if (this.granularitySpec.isRollup()) {
+      log.warn("No metricsSpec has been specified. Are you sure this is what you want?");
+    }
+
+    this.aggregators = aggregators == null ? new AggregatorFactory[]{} : aggregators;
   }
 
   @JsonProperty
@@ -103,12 +109,18 @@ public class DataSchema
   @JsonIgnore
   public InputRowParser getParser()
   {
-    if(parser == null) {
+    if (parser == null) {
       log.warn("No parser has been specified");
       return null;
     }
 
-    final InputRowParser inputRowParser = jsonMapper.convertValue(this.parser, InputRowParser.class);
+    if (cachedParser != null) {
+      return cachedParser;
+    }
+
+    final InputRowParser inputRowParser = transformSpec.decorate(
+        jsonMapper.convertValue(this.parser, InputRowParser.class)
+    );
 
     final Set<String> dimensionExclusions = Sets.newHashSet();
     for (AggregatorFactory aggregator : aggregators) {
@@ -141,22 +153,24 @@ public class DataSchema
           );
         }
 
-        return inputRowParser.withParseSpec(
+        cachedParser = inputRowParser.withParseSpec(
             inputRowParser.getParseSpec()
-                  .withDimensionsSpec(
-                      dimensionsSpec
-                          .withDimensionExclusions(
-                              Sets.difference(dimensionExclusions, dimSet)
+                          .withDimensionsSpec(
+                              dimensionsSpec
+                                  .withDimensionExclusions(
+                                      Sets.difference(dimensionExclusions, dimSet)
+                                  )
                           )
-                  )
         );
       } else {
-        return inputRowParser;
+        cachedParser = inputRowParser;
       }
     } else {
       log.warn("No parseSpec in parser has been specified.");
-      return inputRowParser;
+      cachedParser = inputRowParser;
     }
+
+    return cachedParser;
   }
 
   @JsonProperty("metricsSpec")
@@ -171,9 +185,20 @@ public class DataSchema
     return granularitySpec;
   }
 
+  @JsonProperty
+  public TransformSpec getTransformSpec()
+  {
+    return transformSpec;
+  }
+
   public DataSchema withGranularitySpec(GranularitySpec granularitySpec)
   {
-    return new DataSchema(dataSource, parser, aggregators, granularitySpec, jsonMapper);
+    return new DataSchema(dataSource, parser, aggregators, granularitySpec, transformSpec, jsonMapper);
+  }
+
+  public DataSchema withTransformSpec(TransformSpec transformSpec)
+  {
+    return new DataSchema(dataSource, parser, aggregators, granularitySpec, transformSpec, jsonMapper);
   }
 
   @Override
@@ -184,6 +209,7 @@ public class DataSchema
            ", parser=" + parser +
            ", aggregators=" + Arrays.toString(aggregators) +
            ", granularitySpec=" + granularitySpec +
+           ", transformSpec=" + transformSpec +
            '}';
   }
 }

@@ -23,7 +23,6 @@ import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
-import com.google.common.primitives.Longs;
 import io.druid.segment.ColumnSelectorFactory;
 
 import java.util.Arrays;
@@ -34,7 +33,6 @@ import java.util.List;
  */
 public class CountAggregatorFactory extends AggregatorFactory
 {
-  private static final byte[] CACHE_KEY = new byte[]{0x0};
   private final String name;
 
   @JsonCreator
@@ -69,6 +67,12 @@ public class CountAggregatorFactory extends AggregatorFactory
   public Object combine(Object lhs, Object rhs)
   {
     return CountAggregator.combineValues(lhs, rhs);
+  }
+
+  @Override
+  public AggregateCombiner makeAggregateCombiner()
+  {
+    return new LongSumAggregateCombiner();
   }
 
   @Override
@@ -111,7 +115,7 @@ public class CountAggregatorFactory extends AggregatorFactory
   @Override
   public byte[] getCacheKey()
   {
-    return CACHE_KEY;
+    return new byte[]{AggregatorUtil.COUNT_CACHE_TYPE_ID};
   }
 
   @Override
@@ -123,7 +127,7 @@ public class CountAggregatorFactory extends AggregatorFactory
   @Override
   public int getMaxIntermediateSize()
   {
-    return Longs.BYTES;
+    return Long.BYTES;
   }
 
   @Override

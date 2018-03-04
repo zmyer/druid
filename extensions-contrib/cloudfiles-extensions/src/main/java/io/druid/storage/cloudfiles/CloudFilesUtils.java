@@ -20,13 +20,10 @@
 package io.druid.storage.cloudfiles;
 
 import com.google.common.base.Predicate;
-
 import io.druid.java.util.common.RetryUtils;
-import io.druid.segment.loading.DataSegmentPusherUtil;
-import io.druid.timeline.DataSegment;
+import io.druid.java.util.common.RetryUtils.Task;
 
 import java.io.IOException;
-import java.util.concurrent.Callable;
 
 /**
  *
@@ -52,7 +49,7 @@ public class CloudFilesUtils
   /**
    * Retries CloudFiles operations that fail due to io-related exceptions.
    */
-  public static <T> T retryCloudFilesOperation(Callable<T> f, final int maxTries) throws Exception
+  public static <T> T retryCloudFilesOperation(Task<T> f, final int maxTries) throws Exception
   {
     return RetryUtils.retry(f, CLOUDFILESRETRY, maxTries);
   }
@@ -68,11 +65,6 @@ public class CloudFilesUtils
       path = basePath + "/" + fileName;
     }
     return path;
-  }
-
-  public static String buildCloudFilesPath(String basePath, final DataSegment segment)
-  {
-    return buildCloudFilesPath(basePath, DataSegmentPusherUtil.getStorageDir(segment));
   }
 
 }
